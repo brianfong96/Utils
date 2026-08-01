@@ -18,6 +18,27 @@ python disk_usage_report.py --load-snapshot disk-report.json
 python disk_usage_report.py --drive D:\ --depth 2 --top 25 --snapshot d-drive.json
 ```
 
+### Scan all drives with 32 workers and three tree levels
+
+From the `disk-usage-report` directory, run:
+
+```powershell
+python disk_usage_report.py --workers 32 --depth 3 --snapshot all-drives-report.json
+```
+
+This command:
+
+- omits `--drive`, so every discovered drive is scanned;
+- uses 32 concurrent I/O workers across the discovered drives;
+- renders the root plus three nested directory levels; and
+- writes the complete report to `all-drives-report.json` for reuse.
+
+Open that saved report later without scanning the drives again:
+
+```powershell
+python disk_usage_report.py --load-snapshot all-drives-report.json
+```
+
 The default report depth is `1`, which shows the root and its immediate
 directories. Use `--depth 2` or higher to nest additional levels. Children are
 ordered largest-first, and `--top` limits the number shown under each directory:
