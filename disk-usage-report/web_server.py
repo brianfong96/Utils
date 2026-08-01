@@ -242,6 +242,10 @@ class ScanManager:
             if session.cancel_event.is_set():
                 raise scanner.ScanCancelled
             session.report = report
+            session.emit(
+                "stage",
+                {"stage": "generating", "message": "Saving report history"},
+            )
             history_saved = True
             try:
                 self._history_store.save(session.scan_id, report, config)

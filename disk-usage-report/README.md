@@ -1,44 +1,37 @@
 # Disk Usage Report
 
-A local web application for parallel storage analysis. It discovers mounted
-drives, scans selected drives or folders with a bounded worker pool, shows live
-worker activity, and renders a searchable size tree when the scan completes.
+A standalone Windows application for parallel storage analysis. It discovers
+mounted drives, scans selected drives or folders with a bounded worker pool,
+shows live worker activity, and renders a searchable size tree when the scan
+completes.
 
-## Run the application
+## Build the standalone app
 
-On Windows, double-click **`Start Disk Usage Report.cmd`** in File Explorer.
-It starts the local server and opens the application in your default browser.
-Keep the command window open while using the application; close it or press
-`Ctrl+C` to stop the server.
+Double-click **`Build Windows App.cmd`** in File Explorer. The build uses an
+isolated `.venv`, installs its requirements, and creates one executable:
 
-The launcher uses a local `.venv` when one exists, otherwise it uses the
-installed Python 3 launcher or `python` command. Install the optional drive
-discovery dependency with `python -m pip install -r requirements.txt`.
+```text
+dist\DiskUsageReport.exe
+```
 
-To start it from a terminal instead, run these commands from this directory:
+Double-click that executable to run the app. It opens as one native desktop
+window with no browser or background terminal. Its private local service uses
+`127.0.0.1:5336` only while the app is open.
+
+Python 3 is required to build from source, but the resulting executable is
+standalone and can be run without installing Python or project dependencies.
+
+For development, install the dependencies and run the desktop entry point:
 
 ```powershell
 python -m pip install -r requirements.txt
-python disk_usage_report.py
+python desktop_app.py
 ```
 
-The application opens at [http://127.0.0.1:5336](http://127.0.0.1:5336). It is
-served only on the local computer by default. Press `Ctrl+C` in the terminal to
-stop it.
+The browser-based development launcher remains available with
+`python disk_usage_report.py`.
 
-If you do not want the default browser to open automatically:
-
-```powershell
-python disk_usage_report.py --no-browser
-```
-
-Use another local port when needed:
-
-```powershell
-python disk_usage_report.py --port 9000
-```
-
-## Configure a scan in the browser
+## Configure a scan
 
 The start page contains only the scan controls:
 
@@ -54,10 +47,14 @@ selected, set **Workers** to `32`, set **Tree depth** to `3`, and select
 
 ## Live scan view
 
-While scanning, the page shows the current stage, completed chunk progress,
-elapsed time, indexed files and bytes, and one animated card per worker. Each
-active worker reports the directory it is currently reading and its current
-chunk totals. The scan can be cancelled from the page.
+The app presents three distinct phases: **Chunking** maps the selected roots and
+divides them into parallel work, **Scanning** measures those chunks, and
+**Generating** builds the tree and saves its history snapshot. The current phase
+is highlighted as the scan advances.
+
+The same view shows chunk progress, elapsed time, indexed files and bytes, and
+one animated card per worker. Each active worker reports the directory it is
+currently reading and its current chunk totals. The scan can be cancelled.
 
 ## Interactive report
 
@@ -96,11 +93,12 @@ JSON snapshots from the earlier flat-report format remain readable.
 
 ## Recent scan history
 
-Every completed browser scan is saved locally and appears under **Recent
+Every completed scan is saved locally and appears under **Recent
 scans** on the start page. Each entry shows when the scan ran, how long it took,
 the roots and settings used, and the indexed size. Select **Open report** to
 view the complete interactive report without scanning again.
 
-The newest 10 completed reports are retained as compressed JSON in `.history/`.
-Older reports are removed automatically, and the directory is excluded from
-Git. Cancelled or failed scans are not added to history.
+The desktop app retains its newest 10 compressed reports under
+`%LOCALAPPDATA%\DiskUsageReport\history`. Older reports are removed
+automatically. Cancelled or failed scans are not added to history. Source-mode
+browser runs continue to use the project-local `.history/` directory.

@@ -2,5 +2,7 @@ __pycache__/
 *.py[cod]
 .venv/
 .history/
+build/
+dist/
 *-report.json
 *-report.html

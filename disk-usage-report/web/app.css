@@ -190,6 +190,17 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .scan-heading, .report-heading { display: flex; justify-content: space-between; gap: 24px; align-items: flex-end; padding: 58px 0 28px; }
 .scan-actions { display: flex; align-items: center; gap: 12px; }
 .elapsed { color: var(--muted); font-variant-numeric: tabular-nums; }
+.scan-phases { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; margin: 0 0 12px; padding: 0; list-style: none; }
+.scan-phase { display: flex; gap: 10px; align-items: center; min-width: 0; padding: 12px; border: 1px solid var(--line-soft); border-radius: 12px; background: rgba(16, 23, 34, 0.62); color: var(--muted); transition: border-color 180ms ease, background 180ms ease, color 180ms ease; }
+.scan-phase > span:last-child { display: grid; min-width: 0; }
+.scan-phase strong { color: inherit; font-size: 12px; }
+.scan-phase small { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.phase-number { display: grid; width: 25px; height: 25px; flex: 0 0 25px; place-items: center; border: 1px solid #44516a; border-radius: 50%; font-size: 11px; font-weight: 750; }
+.scan-phase.active { border-color: rgba(97, 214, 188, 0.55); background: rgba(97, 214, 188, 0.08); color: var(--text); }
+.scan-phase.active .phase-number { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 16px rgba(97, 214, 188, 0.16); }
+.scan-phase.complete { color: #9dc8bd; }
+.scan-phase.complete .phase-number { border-color: rgba(97, 214, 188, 0.45); background: rgba(97, 214, 188, 0.14); font-size: 0; }
+.scan-phase.complete .phase-number::after { content: "✓"; font-size: 12px; }
 .progress-panel { padding: 18px; border-radius: 15px; }
 .progress-copy { display: flex; justify-content: space-between; gap: 14px; color: var(--muted); }
 .progress-copy strong { color: var(--text); }
@@ -276,6 +287,7 @@ details.leaf > summary .caret { visibility: hidden; }
   .report-toolbar { grid-template-columns: 1fr; }
   .search-control { grid-column: auto; }
   .path-entry { grid-template-columns: 1fr; }
+  .scan-phases { grid-template-columns: 1fr; }
   .history-heading, .history-row { align-items: start; }
   .history-heading { display: grid; }
   .history-row { grid-template-columns: 1fr; }

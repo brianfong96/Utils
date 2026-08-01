@@ -12,6 +12,7 @@ let scanTerminal = false;
 let reportBindings = [];
 let reportRoots = [];
 let reportDepth = 3;
+const scanPhaseOrder = ["chunking", "scanning", "generating"];
 
 function showView(id) {
   for (const viewId of views) byId(viewId).classList.toggle("active", viewId === id);
@@ -283,14 +284,36 @@ function stopElapsedTimer() {
   elapsedTimer = null;
 }
 
+function updateScanPhase(stage) {
+  const normalized = ["discovering", "preparing"].includes(stage) ? "chunking" : stage;
+  const currentIndex = scanPhaseOrder.indexOf(normalized);
+  if (currentIndex < 0) return;
+  for (const phase of document.querySelectorAll(".scan-phase")) {
+    const phaseIndex = scanPhaseOrder.indexOf(phase.dataset.phase);
+    phase.classList.toggle("active", phaseIndex === currentIndex);
+    phase.classList.toggle("complete", currentIndex >= 0 && phaseIndex < currentIndex);
+  }
+}
+
 function handleStage(data) {
+  updateScanPhase(data.stage);
   byId("scan-stage").textContent = data.message || data.stage;
-  byId("progress-label").textContent = data.stage === "cancelling" ? "Cancelling" : "Scanning storage";
   const fill = byId("progress-fill");
-  if (data.stage !== "scanning") fill.classList.add("indeterminate");
+  const labels = {
+    chunking: "Preparing work chunks",
+    discovering: "Preparing work chunks",
+    preparing: "Preparing work chunks",
+    scanning: "Scanning storage",
+    generating: "Generating results",
+    cancelling: "Cancelling"
+  };
+  byId("progress-label").textContent = labels[data.stage] || "Working";
+  fill.classList.toggle("indeterminate", data.stage !== "scanning");
+  if (data.stage !== "scanning") fill.style.width = "34%";
 }
 
 function handleProgress(data) {
+  updateScanPhase("scanning");
   const total = Number(data.total) || 0;
   const completed = Number(data.completed) || 0;
   const percent = total ? (completed / total) * 100 : 0;
@@ -371,6 +394,7 @@ async function startScan(event) {
     byId("progress-stats").textContent = "Discovering paths";
     byId("progress-fill").style.width = "34%";
     byId("progress-fill").classList.add("indeterminate");
+    updateScanPhase("chunking");
     initializeWorkers(workers);
     startElapsedTimer();
     showView("scan-view");

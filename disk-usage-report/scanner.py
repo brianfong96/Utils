@@ -446,8 +446,8 @@ def scan_drives(
     emit_progress(
         progress_callback,
         "stage",
-        stage="discovering",
-        message="Mapping the requested directory levels",
+        stage="chunking",
+        message="Mapping folders for parallel chunks",
     )
     if show_progress:
         print("Discovering directory tree...", file=sys.stderr)
@@ -488,7 +488,7 @@ def scan_drives(
     emit_progress(
         progress_callback,
         "stage",
-        stage="preparing",
+        stage="chunking",
         message=f"Splitting {len(leaf_references):,} leaf directories into chunks",
     )
     if show_progress:
@@ -588,6 +588,12 @@ def scan_drives(
                 )
                 last_progress = now
 
+    emit_progress(
+        progress_callback,
+        "stage",
+        stage="generating",
+        message="Generating the interactive report",
+    )
     for nodes in drive_nodes:
         for node_index in range(len(nodes) - 1, 0, -1):
             node = nodes[node_index]

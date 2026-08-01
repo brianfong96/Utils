@@ -87,6 +87,21 @@
         </div>
       </div>
 
+      <ol id="scan-phases" class="scan-phases" aria-label="Scan phases">
+        <li class="scan-phase" data-phase="chunking">
+          <span class="phase-number">1</span>
+          <span><strong>Chunking</strong><small>Map and divide folders</small></span>
+        </li>
+        <li class="scan-phase" data-phase="scanning">
+          <span class="phase-number">2</span>
+          <span><strong>Scanning</strong><small>Measure files in parallel</small></span>
+        </li>
+        <li class="scan-phase" data-phase="generating">
+          <span class="phase-number">3</span>
+          <span><strong>Generating</strong><small>Build and save the report</small></span>
+        </li>
+      </ol>
+
       <div class="progress-panel">
         <div class="progress-copy">
           <strong id="progress-label">Preparing scan</strong>
