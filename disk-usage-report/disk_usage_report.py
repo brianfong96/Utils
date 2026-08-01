@@ -3,6 +3,7 @@
 
 Examples:
     python disk_usage_report.py --snapshot disk-report.json
+    python disk_usage_report.py --depth 3 --html disk-report.html
     python disk_usage_report.py --load-snapshot disk-report.json
     python disk_usage_report.py --drive C:\\ --workers 16 --top 25
 
@@ -424,6 +425,33 @@ def save_snapshot(report: dict[str, Any], path: Path) -> None:
             temporary.unlink()
 
 
+def save_html_report(report: dict[str, Any], path: Path) -> None:
+    """Write a self-contained interactive HTML report with embedded scan data."""
+    template_path = Path(__file__).with_name("report_template.html")
+    template = template_path.read_text(encoding="utf-8")
+    placeholder = "__DISK_REPORT_DATA__"
+    if placeholder not in template:
+        raise ValueError(f"HTML template is missing {placeholder!r}.")
+
+    # Keep folder names from being interpreted as markup or closing the script tag.
+    embedded_data = (
+        json.dumps(report, ensure_ascii=False, separators=(",", ":"))
+        .replace("&", "\\u0026")
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+    )
+    output = template.replace(placeholder, embedded_data)
+    path = path.resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    try:
+        temporary.write_text(output, encoding="utf-8", newline="\n")
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
 def load_snapshot(path: Path) -> dict[str, Any]:
     try:
         with path.open(encoding="utf-8") as file:
@@ -575,6 +603,15 @@ def parse_args() -> argparse.Namespace:
         help="Display an existing snapshot immediately without scanning.",
     )
     parser.add_argument(
+        "--html",
+        type=Path,
+        metavar="FILE",
+        help=(
+            "Write a self-contained interactive HTML report instead of "
+            "terminal results."
+        ),
+    )
+    parser.add_argument(
         "--no-progress", action="store_true", help="Disable live scan progress."
     )
     args = parser.parse_args()
@@ -595,7 +632,18 @@ def main() -> int:
         except ValueError as error:
             print(error, file=sys.stderr)
             return 1
-        print_report(report, args.top)
+        if args.html:
+            try:
+                save_html_report(report, args.html)
+            except (OSError, ValueError) as error:
+                print(
+                    f"Could not save HTML report {args.html}: {error}",
+                    file=sys.stderr,
+                )
+                return 1
+            print(f"HTML report saved to {args.html.resolve()}")
+        else:
+            print_report(report, args.top)
         return 0
 
     drives = discover_drives(args.drive)
@@ -603,21 +651,27 @@ def main() -> int:
         print("No accessible drives or scan roots found.", file=sys.stderr)
         return 1
 
-    print("Drive capacity (least free space first)")
-    print_table(
-        ("Drive", "Total", "Used", "Free", "Free %"),
-        [
-            (
-                str(drive.path),
-                human_size(drive.total),
-                human_size(drive.used),
-                human_size(drive.free),
-                f"{drive.free / drive.total:.1%}",
-            )
-            for drive in drives
-        ],
-    )
-    print(file=sys.stderr)
+    if not args.html:
+        print("Drive capacity (least free space first)")
+        print_table(
+            ("Drive", "Total", "Used", "Free", "Free %"),
+            [
+                (
+                    str(drive.path),
+                    human_size(drive.total),
+                    human_size(drive.used),
+                    human_size(drive.free),
+                    f"{drive.free / drive.total:.1%}",
+                )
+                for drive in drives
+            ],
+        )
+        print(file=sys.stderr)
+    elif not args.no_progress:
+        print(
+            f"Scanning {len(drives)} drive(s) for interactive HTML output...",
+            file=sys.stderr,
+        )
 
     try:
         report = scan_drives(
@@ -628,11 +682,12 @@ def main() -> int:
             not args.no_progress,
         )
     except KeyboardInterrupt:
-        print("\nScan cancelled; no snapshot was written.", file=sys.stderr)
+        print("\nScan cancelled; no report was written.", file=sys.stderr)
         return 130
 
-    print()
-    print_report(report, args.top, show_capacity=False)
+    if not args.html:
+        print()
+        print_report(report, args.top, show_capacity=False)
     if args.snapshot:
         try:
             save_snapshot(report, args.snapshot)
@@ -640,6 +695,13 @@ def main() -> int:
             print(f"Could not save snapshot {args.snapshot}: {error}", file=sys.stderr)
             return 1
         print(f"\nSnapshot saved to {args.snapshot.resolve()}")
+    if args.html:
+        try:
+            save_html_report(report, args.html)
+        except (OSError, ValueError) as error:
+            print(f"Could not save HTML report {args.html}: {error}", file=sys.stderr)
+            return 1
+        print(f"\nHTML report saved to {args.html.resolve()}")
     return 0
 
 

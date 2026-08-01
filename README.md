@@ -6,4 +6,4 @@ documentation, and generated-file exclusions in its own directory.
 ## Tools
 
 - [Disk Usage Report](disk-usage-report/README.md) — parallel drive analysis,
-  nested size trees, and reusable JSON snapshots.
+  nested size trees, reusable snapshots, and interactive HTML reports.

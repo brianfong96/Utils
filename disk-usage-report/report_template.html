@@ -1,0 +1,505 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Disk Usage Report</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1020;
+      --panel: #121a2d;
+      --panel-2: #182238;
+      --line: #293653;
+      --text: #edf2ff;
+      --muted: #9aa9c6;
+      --accent: #65d6c1;
+      --accent-2: #70a5ff;
+      --warning: #f5bd63;
+      --danger: #ff7e8a;
+      --shadow: 0 18px 55px rgba(0, 0, 0, 0.28);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 10% -10%, rgba(112, 165, 255, 0.18), transparent 34rem),
+        radial-gradient(circle at 90% 0%, rgba(101, 214, 193, 0.12), transparent 28rem),
+        var(--bg);
+      color: var(--text);
+      font: 14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      min-height: 100vh;
+    }
+
+    header, main { width: min(1480px, calc(100% - 32px)); margin-inline: auto; }
+
+    header { padding: 44px 0 24px; }
+
+    h1 { margin: 0; font-size: clamp(28px, 4vw, 48px); letter-spacing: -0.04em; }
+    h2 { margin: 0; font-size: 20px; letter-spacing: -0.02em; }
+    p { margin: 0; }
+
+    .subtitle { color: var(--muted); margin-top: 8px; }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(130px, 1fr));
+      gap: 12px;
+      margin-top: 26px;
+    }
+
+    .metric, .drive-card, .toolbar {
+      background: linear-gradient(145deg, rgba(24, 34, 56, 0.94), rgba(18, 26, 45, 0.94));
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+    }
+
+    .metric { padding: 15px 17px; border-radius: 14px; }
+    .metric-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+    .metric-value { display: block; margin-top: 4px; font-size: 19px; font-weight: 700; }
+
+    .toolbar {
+      position: sticky;
+      z-index: 20;
+      top: 8px;
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) auto auto auto auto;
+      gap: 10px;
+      align-items: end;
+      padding: 14px;
+      border-radius: 16px;
+      margin-bottom: 18px;
+      backdrop-filter: blur(18px);
+    }
+
+    label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
+    .size-filter { display: grid; grid-template-columns: 110px 82px; gap: 6px; }
+
+    input, select, button {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #0d1425;
+      color: var(--text);
+      font: inherit;
+    }
+
+    input, select { padding: 8px 10px; }
+    input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 1px; }
+
+    button { padding: 8px 13px; cursor: pointer; font-weight: 650; white-space: nowrap; }
+    button:hover { border-color: var(--accent-2); background: #17213a; }
+
+    .result-count { color: var(--muted); min-height: 22px; margin: -6px 2px 14px; }
+
+    .drive-card { border-radius: 18px; margin: 0 0 22px; overflow: hidden; }
+    .drive-header { padding: 20px 22px; border-bottom: 1px solid var(--line); }
+    .drive-title-row { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; }
+    .drive-path { color: var(--accent); overflow-wrap: anywhere; }
+    .drive-free { color: var(--muted); white-space: nowrap; }
+
+    .capacity-track, .share-track {
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.07);
+      border-radius: 999px;
+    }
+
+    .capacity-track { height: 10px; margin-top: 14px; }
+    .capacity-fill { height: 100%; background: linear-gradient(90deg, var(--accent-2), var(--accent)); border-radius: inherit; }
+    .capacity-fill.critical { background: linear-gradient(90deg, var(--warning), var(--danger)); }
+
+    .drive-stats { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 11px; color: var(--muted); font-size: 12px; }
+    .tree { padding: 14px 18px 20px; overflow-x: auto; }
+
+    details.tree-node { min-width: 620px; }
+    details.tree-node[hidden] { display: none; }
+    summary { list-style: none; }
+    summary::-webkit-details-marker { display: none; }
+
+    .node-row, .loose-row {
+      position: relative;
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) 110px 74px 170px;
+      gap: 10px;
+      align-items: center;
+      min-height: 42px;
+      padding: 6px 10px;
+      border-radius: 9px;
+      isolation: isolate;
+    }
+
+    summary.node-row { cursor: pointer; }
+    summary.node-row:hover, .loose-row:hover { background: rgba(112, 165, 255, 0.08); }
+
+    .node-name { display: flex; align-items: center; min-width: 0; font-weight: 650; }
+    .node-name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .caret { width: 20px; flex: 0 0 20px; color: var(--muted); transition: transform 140ms ease; }
+    .caret::before { content: "▸"; }
+    details[open] > summary .caret { transform: rotate(90deg); }
+    details.leaf > summary .caret { visibility: hidden; }
+
+    .node-size { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; }
+    .node-percent { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .node-counts { color: var(--muted); font-size: 12px; text-align: right; white-space: nowrap; }
+
+    .share-track { position: absolute; z-index: -1; inset: 5px 6px; opacity: 0.54; }
+    .share-fill { height: 100%; background: linear-gradient(90deg, rgba(112, 165, 255, 0.2), rgba(101, 214, 193, 0.06)); border-right: 2px solid rgba(101, 214, 193, 0.62); }
+
+    .children { margin-left: 20px; padding-left: 9px; border-left: 1px solid var(--line); }
+    .loose-row { color: var(--muted); }
+    .loose-row .share-fill { background: rgba(245, 189, 99, 0.16); border-color: rgba(245, 189, 99, 0.7); }
+    .loose-icon { width: 20px; flex: 0 0 20px; color: var(--warning); }
+    .loose-icon::before { content: "•"; font-size: 22px; }
+
+    mark { background: rgba(245, 189, 99, 0.3); color: inherit; border-radius: 3px; }
+    footer { color: var(--muted); text-align: center; padding: 14px 0 36px; }
+
+    @media (max-width: 900px) {
+      .metrics { grid-template-columns: repeat(2, 1fr); }
+      .toolbar { position: static; grid-template-columns: 1fr 1fr; }
+      .toolbar .search-field { grid-column: 1 / -1; }
+      .node-row, .loose-row { grid-template-columns: minmax(210px, 1fr) 100px 64px; }
+      .node-counts { display: none; }
+    }
+
+    @media (max-width: 560px) {
+      header, main { width: min(100% - 18px, 1480px); }
+      header { padding-top: 26px; }
+      .metrics { grid-template-columns: 1fr 1fr; }
+      .toolbar { grid-template-columns: 1fr; }
+      .toolbar .search-field { grid-column: auto; }
+      .size-filter { grid-template-columns: 1fr 90px; }
+      .drive-title-row { display: block; }
+      .drive-free { display: block; margin-top: 5px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Disk Usage Report</h1>
+    <p class="subtitle" id="report-meta"></p>
+    <section class="metrics" aria-label="Report summary">
+      <div class="metric"><span class="metric-label">Drives</span><strong class="metric-value" id="metric-drives">—</strong></div>
+      <div class="metric"><span class="metric-label">Indexed data</span><strong class="metric-value" id="metric-bytes">—</strong></div>
+      <div class="metric"><span class="metric-label">Files</span><strong class="metric-value" id="metric-files">—</strong></div>
+      <div class="metric"><span class="metric-label">Folders</span><strong class="metric-value" id="metric-folders">—</strong></div>
+      <div class="metric"><span class="metric-label">Scan time</span><strong class="metric-value" id="metric-duration">—</strong></div>
+    </section>
+  </header>
+
+  <main>
+    <section class="toolbar" aria-label="Report filters">
+      <label class="search-field">Search folder or path
+        <input id="search" type="search" placeholder="e.g. Users, Video, node_modules" autocomplete="off">
+      </label>
+      <label>Minimum size
+        <span class="size-filter">
+          <input id="minimum-size" type="number" min="0" step="0.1" value="0">
+          <select id="minimum-unit" aria-label="Minimum size unit">
+            <option value="1048576">MiB</option>
+            <option value="1073741824" selected>GiB</option>
+            <option value="1099511627776">TiB</option>
+          </select>
+        </span>
+      </label>
+      <button id="expand-all" type="button">Expand all</button>
+      <button id="collapse-all" type="button">Collapse all</button>
+      <button id="reset" type="button">Reset filters</button>
+    </section>
+    <p class="result-count" id="result-count" aria-live="polite"></p>
+    <div id="drives"></div>
+  </main>
+
+  <footer>This is a self-contained static report. No scan data leaves this page.</footer>
+
+  <script id="report-data" type="application/json">__DISK_REPORT_DATA__</script>
+  <script>
+    "use strict";
+
+    const report = JSON.parse(document.getElementById("report-data").textContent);
+    const maxDepth = Number(report.settings?.depth ?? 1);
+    const bindings = [];
+    const rootBindings = [];
+
+    function formatBytes(value) {
+      const units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
+      let amount = Math.max(0, Number(value) || 0);
+      let index = 0;
+      while (amount >= 1024 && index < units.length - 1) {
+        amount /= 1024;
+        index += 1;
+      }
+      return index === 0 ? `${Math.round(amount)} B` : `${amount.toFixed(1)} ${units[index]}`;
+    }
+
+    function formatCount(value) {
+      return new Intl.NumberFormat().format(Number(value) || 0);
+    }
+
+    function formatDuration(seconds) {
+      const value = Number(seconds) || 0;
+      if (value < 60) return `${value.toFixed(1)} sec`;
+      const minutes = Math.floor(value / 60);
+      const remainder = Math.round(value % 60);
+      return `${minutes}m ${remainder}s`;
+    }
+
+    function percentage(value, parent) {
+      if (!parent) return 100;
+      return Math.max(0, Math.min(100, (Number(value) / Number(parent)) * 100));
+    }
+
+    function pathName(path) {
+      const pieces = String(path).split(/[\\/]/).filter(Boolean);
+      return pieces.at(-1) || path;
+    }
+
+    function normalizeTree(drive) {
+      if (drive.tree) return drive.tree;
+      const children = (drive.paths || []).map(item => ({
+        name: pathName(item.path),
+        path: item.path,
+        bytes: item.bytes,
+        files: item.files,
+        directories: item.directories,
+        skipped: 0,
+        children: []
+      }));
+      return {
+        name: drive.path,
+        path: drive.path,
+        bytes: drive.scan?.bytes || 0,
+        files: drive.scan?.files || 0,
+        directories: drive.scan?.directories || 0,
+        skipped: drive.scan?.skipped || 0,
+        children
+      };
+    }
+
+    function createText(tag, className, text) {
+      const element = document.createElement(tag);
+      element.className = className;
+      element.textContent = text;
+      return element;
+    }
+
+    function renderNode(node, parentBytes, level) {
+      const details = document.createElement("details");
+      details.className = "tree-node";
+      details.open = level < 2;
+      details.dataset.bytes = String(node.bytes || 0);
+
+      const summary = document.createElement("summary");
+      summary.className = "node-row";
+      summary.title = node.path || node.name;
+
+      const name = document.createElement("span");
+      name.className = "node-name";
+      const caret = document.createElement("span");
+      caret.className = "caret";
+      const nameText = createText("span", "node-name-text", node.name || node.path);
+      name.append(caret, nameText);
+
+      const bytes = Number(node.bytes) || 0;
+      const share = percentage(bytes, parentBytes);
+      summary.append(
+        name,
+        createText("span", "node-size", formatBytes(bytes)),
+        createText("span", "node-percent", `${share.toFixed(1)}%`),
+        createText(
+          "span",
+          "node-counts",
+          `${formatCount(node.files)} files · ${formatCount(node.directories)} folders`
+        )
+      );
+      const track = document.createElement("span");
+      track.className = "share-track";
+      const fill = document.createElement("span");
+      fill.className = "share-fill";
+      fill.style.width = `${share}%`;
+      track.append(fill);
+      summary.append(track);
+      details.append(summary);
+
+      const childrenContainer = document.createElement("div");
+      childrenContainer.className = "children";
+      const children = [...(node.children || [])].sort((a, b) => b.bytes - a.bytes);
+      const childBindings = [];
+      let childBytes = 0;
+      for (const child of children) {
+        childBytes += Number(child.bytes) || 0;
+        const rendered = renderNode(child, bytes, level + 1);
+        childBindings.push(rendered.binding);
+        childrenContainer.append(rendered.element);
+      }
+
+      const remainder = Math.max(0, bytes - childBytes);
+      let looseElement = null;
+      if (remainder > 0) {
+        const looseLabel = level >= maxDepth
+          ? "Files and deeper folders beyond report depth"
+          : "Loose files in this folder";
+        looseElement = document.createElement("div");
+        looseElement.className = "loose-row";
+        looseElement.dataset.bytes = String(remainder);
+        const looseName = document.createElement("span");
+        looseName.className = "node-name";
+        looseName.append(
+          createText("span", "loose-icon", ""),
+          createText("span", "node-name-text", looseLabel)
+        );
+        const looseShare = percentage(remainder, bytes);
+        looseElement.append(
+          looseName,
+          createText("span", "node-size", formatBytes(remainder)),
+          createText("span", "node-percent", `${looseShare.toFixed(1)}%`),
+          createText("span", "node-counts", "Remainder of parent total")
+        );
+        const looseTrack = document.createElement("span");
+        looseTrack.className = "share-track";
+        const looseFill = document.createElement("span");
+        looseFill.className = "share-fill";
+        looseFill.style.width = `${looseShare}%`;
+        looseTrack.append(looseFill);
+        looseElement.append(looseTrack);
+        childrenContainer.append(looseElement);
+      }
+
+      if (!children.length && !looseElement) details.classList.add("leaf");
+      details.append(childrenContainer);
+
+      const binding = {
+        element: details,
+        details,
+        nameElement: nameText,
+        searchText: `${node.name || ""} ${node.path || ""}`.toLocaleLowerCase(),
+        bytes,
+        children: childBindings,
+        looseElement,
+        looseBytes: remainder,
+        level
+      };
+      bindings.push(binding);
+      return { element: details, binding };
+    }
+
+    function renderDrive(drive) {
+      const section = document.createElement("section");
+      section.className = "drive-card";
+      const header = document.createElement("div");
+      header.className = "drive-header";
+      const titleRow = document.createElement("div");
+      titleRow.className = "drive-title-row";
+      const usedPercent = percentage(drive.used, drive.total);
+      const freePercent = percentage(drive.free, drive.total);
+      titleRow.append(
+        createText("h2", "drive-path", drive.path),
+        createText("span", "drive-free", `${formatBytes(drive.free)} free · ${freePercent.toFixed(1)}%`)
+      );
+      const capacity = document.createElement("div");
+      capacity.className = "capacity-track";
+      capacity.title = `${formatBytes(drive.used)} used of ${formatBytes(drive.total)}`;
+      const capacityFill = document.createElement("div");
+      capacityFill.className = `capacity-fill${freePercent < 10 ? " critical" : ""}`;
+      capacityFill.style.width = `${usedPercent}%`;
+      capacity.append(capacityFill);
+      const scan = drive.scan || {};
+      const stats = document.createElement("div");
+      stats.className = "drive-stats";
+      for (const value of [
+        `${formatBytes(drive.used)} used of ${formatBytes(drive.total)}`,
+        `${formatBytes(scan.bytes)} indexed`,
+        `${formatCount(scan.files)} files`,
+        `${formatCount(scan.directories)} folders`,
+        `${formatCount(scan.skipped)} skipped`
+      ]) stats.append(createText("span", "", value));
+      header.append(titleRow, capacity, stats);
+
+      const treeContainer = document.createElement("div");
+      treeContainer.className = "tree";
+      const rendered = renderNode(normalizeTree(drive), null, 0);
+      rootBindings.push(rendered.binding);
+      treeContainer.append(rendered.element);
+      section.append(header, treeContainer);
+      return section;
+    }
+
+    const totals = report.drives.reduce((sum, drive) => {
+      sum.bytes += Number(drive.scan?.bytes) || 0;
+      sum.files += Number(drive.scan?.files) || 0;
+      sum.directories += Number(drive.scan?.directories) || 0;
+      return sum;
+    }, { bytes: 0, files: 0, directories: 0 });
+
+    document.getElementById("report-meta").textContent =
+      `Captured ${new Date(report.created_at).toLocaleString()} on ${report.host} · depth ${maxDepth} · ${report.settings?.workers ?? "—"} workers`;
+    document.getElementById("metric-drives").textContent = formatCount(report.drives.length);
+    document.getElementById("metric-bytes").textContent = formatBytes(totals.bytes);
+    document.getElementById("metric-files").textContent = formatCount(totals.files);
+    document.getElementById("metric-folders").textContent = formatCount(totals.directories);
+    document.getElementById("metric-duration").textContent = formatDuration(report.duration_seconds);
+
+    const drivesContainer = document.getElementById("drives");
+    for (const drive of report.drives) drivesContainer.append(renderDrive(drive));
+
+    const search = document.getElementById("search");
+    const minimumSize = document.getElementById("minimum-size");
+    const minimumUnit = document.getElementById("minimum-unit");
+    const resultCount = document.getElementById("result-count");
+    let filterFrame = null;
+
+    function filterBinding(binding, query, minimum, inheritedMatch = false) {
+      const selfMatch = !query || binding.searchText.includes(query);
+      const branchMatch = inheritedMatch || selfMatch;
+      let visibleChildren = 0;
+      for (const child of binding.children) {
+        if (filterBinding(child, query, minimum, branchMatch)) visibleChildren += 1;
+      }
+      let looseVisible = false;
+      if (binding.looseElement) {
+        looseVisible = binding.looseBytes >= minimum && branchMatch;
+        binding.looseElement.hidden = !looseVisible;
+      }
+      const ownVisible = binding.bytes >= minimum && branchMatch;
+      const visible = ownVisible || visibleChildren > 0 || looseVisible;
+      binding.element.hidden = !visible;
+      if (query && (visibleChildren > 0 || looseVisible)) binding.details.open = true;
+      return visible;
+    }
+
+    function applyFilters() {
+      const query = search.value.trim().toLocaleLowerCase();
+      const minimum = (Number(minimumSize.value) || 0) * Number(minimumUnit.value);
+      for (const root of rootBindings) filterBinding(root, query, minimum);
+      const visible = bindings.filter(binding => !binding.element.hidden).length;
+      resultCount.textContent = `Showing ${formatCount(visible)} of ${formatCount(bindings.length)} directories. Bars show each item as a share of its parent.`;
+    }
+
+    function scheduleFilters() {
+      if (filterFrame) cancelAnimationFrame(filterFrame);
+      filterFrame = requestAnimationFrame(applyFilters);
+    }
+
+    search.addEventListener("input", scheduleFilters);
+    minimumSize.addEventListener("input", scheduleFilters);
+    minimumUnit.addEventListener("change", scheduleFilters);
+    document.getElementById("expand-all").addEventListener("click", () => {
+      for (const binding of bindings) if (!binding.element.hidden) binding.details.open = true;
+    });
+    document.getElementById("collapse-all").addEventListener("click", () => {
+      for (const binding of bindings) binding.details.open = binding.level === 0;
+    });
+    document.getElementById("reset").addEventListener("click", () => {
+      search.value = "";
+      minimumSize.value = "0";
+      minimumUnit.value = "1073741824";
+      for (const binding of bindings) binding.details.open = binding.level < 2;
+      applyFilters();
+    });
+
+    applyFilters();
+  </script>
+</body>
+</html>
