@@ -22,13 +22,13 @@ import socket
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEFAULT_WORKERS = min(16, max(4, (os.cpu_count() or 4) * 2))
 
 
@@ -40,11 +40,13 @@ class Drive:
     free: int
 
 
-@dataclass(frozen=True)
-class ReportTarget:
+@dataclass
+class DirectoryNode:
     path: str
-    is_directory: bool
-    size: int = 0
+    level: int
+    parent: int | None
+    children: list[int] = field(default_factory=list)
+    stats: "ScanStats" = field(default_factory=lambda: ScanStats())
 
 
 @dataclass
@@ -141,23 +143,24 @@ def is_same_filesystem(entry: os.DirEntry[str], device: int | None) -> bool:
     return entry.stat(follow_symlinks=False).st_dev == device
 
 
-def find_report_targets(
+def discover_directory_tree(
     drive: Drive, depth: int
-) -> tuple[list[ReportTarget], int, int | None]:
-    """Find files and directories exactly ``depth`` levels below a scan root."""
+) -> tuple[list[DirectoryNode], list[int], int | None]:
+    """Build directory nodes through ``depth`` and count files above the leaves."""
     device = root_device(drive.path)
+    nodes = [DirectoryNode(str(drive.path), 0, None)]
     if depth == 0:
-        return [ReportTarget(str(drive.path), True)], 0, device
+        return nodes, [0], device
 
-    frontier = [str(drive.path)]
-    skipped = 0
-    for current_depth in range(depth):
-        at_report_depth = current_depth + 1 == depth
-        next_frontier: list[str] = []
-        targets: list[ReportTarget] = []
-        for directory in frontier:
+    frontier = [0]
+    leaf_indexes: list[int] = []
+    for level in range(depth):
+        next_frontier: list[int] = []
+        for node_index in frontier:
+            node = nodes[node_index]
+            node.stats.directories = 1
             try:
-                with os.scandir(directory) as entries:
+                with os.scandir(node.path) as entries:
                     for entry in entries:
                         try:
                             if entry.is_symlink():
@@ -165,26 +168,30 @@ def find_report_targets(
                             if entry.is_dir(follow_symlinks=False):
                                 if not is_same_filesystem(entry, device):
                                     continue
-                                if at_report_depth:
-                                    targets.append(ReportTarget(entry.path, True))
-                                else:
-                                    next_frontier.append(entry.path)
-                            elif at_report_depth:
-                                targets.append(
-                                    ReportTarget(
+                                child_index = len(nodes)
+                                nodes.append(
+                                    DirectoryNode(
                                         entry.path,
-                                        False,
-                                        entry.stat(follow_symlinks=False).st_size,
+                                        level + 1,
+                                        node_index,
                                     )
                                 )
+                                node.children.append(child_index)
+                                if level + 1 == depth:
+                                    leaf_indexes.append(child_index)
+                                else:
+                                    next_frontier.append(child_index)
+                            else:
+                                node.stats.bytes += entry.stat(
+                                    follow_symlinks=False
+                                ).st_size
+                                node.stats.files += 1
                         except OSError:
-                            skipped += 1
+                            node.stats.skipped += 1
             except OSError:
-                skipped += 1
-        if at_report_depth:
-            return targets, skipped, device
+                node.stats.skipped += 1
         frontier = next_frontier
-    return [], skipped, device
+    return nodes, leaf_indexes, device
 
 
 def prepare_target(path: str, split_depth: int, device: int | None) -> PreparedTarget:
@@ -268,59 +275,58 @@ def scan_drives(
 ) -> dict[str, Any]:
     started = time.perf_counter()
     if show_progress:
-        print("Discovering report paths...", file=sys.stderr)
+        print("Discovering directory tree...", file=sys.stderr)
 
-    discoveries: list[tuple[list[ReportTarget], int, int | None] | None] = [
-        None
-    ] * len(drives)
+    discoveries: list[
+        tuple[list[DirectoryNode], list[int], int | None] | None
+    ] = [None] * len(drives)
     with ThreadPoolExecutor(max_workers=min(workers, len(drives))) as executor:
         futures = {
-            executor.submit(find_report_targets, drive, depth): index
+            executor.submit(discover_directory_tree, drive, depth): index
             for index, drive in enumerate(drives)
         }
         for future in as_completed(futures):
             discoveries[futures[future]] = future.result()
 
-    all_targets: list[tuple[int, ReportTarget, int | None]] = []
-    discovery_skips = [0] * len(drives)
+    drive_nodes: list[list[DirectoryNode]] = [[] for _ in drives]
+    leaf_references: list[tuple[int, int, int | None]] = []
     for drive_index, discovery in enumerate(discoveries):
         if discovery is None:
             continue
-        targets, skipped, device = discovery
-        discovery_skips[drive_index] = skipped
-        all_targets.extend((drive_index, target, device) for target in targets)
+        nodes, leaf_indexes, device = discovery
+        drive_nodes[drive_index] = nodes
+        leaf_references.extend(
+            (drive_index, node_index, device) for node_index in leaf_indexes
+        )
 
-    directory_indexes = [
-        index for index, (_, target, _) in enumerate(all_targets) if target.is_directory
-    ]
     prepared: dict[int, PreparedTarget] = {}
     if show_progress:
         print(
-            f"Preparing parallel chunks from {len(directory_indexes):,} directories...",
+            f"Preparing parallel chunks from {len(leaf_references):,} leaf directories...",
             file=sys.stderr,
         )
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
             executor.submit(
                 prepare_target,
-                all_targets[index][1].path,
+                drive_nodes[drive_index][node_index].path,
                 split_depth,
-                all_targets[index][2],
-            ): index
-            for index in directory_indexes
+                device,
+            ): reference_index
+            for reference_index, (drive_index, node_index, device) in enumerate(
+                leaf_references
+            )
         }
         for future in as_completed(futures):
             prepared[futures[future]] = future.result()
 
-    target_stats: list[ScanStats] = []
     jobs: list[tuple[int, str, int | None]] = []
-    for index, (_, target, device) in enumerate(all_targets):
-        if target.is_directory:
-            item = prepared[index]
-            target_stats.append(item.base)
-            jobs.extend((index, path, device) for path in item.jobs)
-        else:
-            target_stats.append(ScanStats(bytes=target.size, files=1))
+    for reference_index, (drive_index, node_index, device) in enumerate(
+        leaf_references
+    ):
+        item = prepared[reference_index]
+        drive_nodes[drive_index][node_index].stats = item.base
+        jobs.extend((reference_index, path, device) for path in item.jobs)
 
     completed_stats = ScanStats()
     last_progress = 0.0
@@ -331,12 +337,13 @@ def scan_drives(
         )
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
-            executor.submit(scan_subtree, path, device): target_index
-            for target_index, path, device in jobs
+            executor.submit(scan_subtree, path, device): reference_index
+            for reference_index, path, device in jobs
         }
         for completed, future in enumerate(as_completed(futures), 1):
             stats = future.result()
-            target_stats[futures[future]].add(stats)
+            drive_index, node_index, _ = leaf_references[futures[future]]
+            drive_nodes[drive_index][node_index].stats.add(stats)
             completed_stats.add(stats)
             now = time.perf_counter()
             if show_progress and (now - last_progress >= 0.5 or completed == len(jobs)):
@@ -349,18 +356,11 @@ def scan_drives(
                 )
                 last_progress = now
 
-    drive_paths: list[list[dict[str, Any]]] = [[] for _ in drives]
-    drive_stats = [ScanStats(skipped=count) for count in discovery_skips]
-    for (drive_index, target, _), stats in zip(all_targets, target_stats):
-        drive_stats[drive_index].add(stats)
-        drive_paths[drive_index].append(
-            {
-                "path": target.path,
-                "bytes": stats.bytes,
-                "files": stats.files,
-                "directories": stats.directories,
-            }
-        )
+    for nodes in drive_nodes:
+        for node_index in range(len(nodes) - 1, 0, -1):
+            node = nodes[node_index]
+            if node.parent is not None:
+                nodes[node.parent].stats.add(node.stats)
 
     duration = time.perf_counter() - started
     return {
@@ -380,12 +380,34 @@ def scan_drives(
                 "total": drive.total,
                 "used": drive.used,
                 "free": drive.free,
-                "scan": asdict(drive_stats[index]),
-                "paths": drive_paths[index],
+                "scan": asdict(drive_nodes[index][0].stats),
+                "tree": serialize_directory_tree(drive_nodes[index]),
             }
             for index, drive in enumerate(drives)
         ],
     }
+
+
+def serialize_directory_tree(nodes: list[DirectoryNode]) -> dict[str, Any]:
+    """Convert indexed nodes into a nested, snapshot-friendly dictionary."""
+    serialized: list[dict[str, Any] | None] = [None] * len(nodes)
+    for node_index in range(len(nodes) - 1, -1, -1):
+        node = nodes[node_index]
+        name = (
+            node.path
+            if node.parent is None
+            else os.path.basename(os.path.normpath(node.path)) or node.path
+        )
+        serialized[node_index] = {
+            "name": name,
+            "path": node.path,
+            **asdict(node.stats),
+            "children": [serialized[index] for index in node.children],
+        }
+    root = serialized[0]
+    if root is None:
+        raise ValueError("Cannot serialize an empty directory tree.")
+    return root
 
 
 def save_snapshot(report: dict[str, Any], path: Path) -> None:
@@ -408,10 +430,10 @@ def load_snapshot(path: Path) -> dict[str, Any]:
             report = json.load(file)
     except (OSError, json.JSONDecodeError) as error:
         raise ValueError(f"Could not load snapshot {path}: {error}") from error
-    if report.get("schema_version") != SCHEMA_VERSION:
+    if report.get("schema_version") not in (1, SCHEMA_VERSION):
         raise ValueError(
             f"Unsupported snapshot schema {report.get('schema_version')!r}; "
-            f"expected {SCHEMA_VERSION}."
+            f"expected 1 or {SCHEMA_VERSION}."
         )
     return report
 
@@ -424,6 +446,33 @@ def print_table(headers: tuple[str, ...], rows: list[tuple[str, ...]]) -> None:
     print("  ".join("-" * width for width in widths))
     for row in rows:
         print("  ".join(value.ljust(width) for value, width in zip(row, widths)))
+
+
+def print_storage_tree(root: dict[str, Any], top: int) -> None:
+    """Render a size-sorted ASCII tree, limiting children at each directory."""
+    print(f"{root['name']}  [{human_size(root['bytes'])}]")
+
+    def render(node: dict[str, Any], prefix: str) -> None:
+        children = sorted(
+            node.get("children", []),
+            key=lambda child: child["bytes"],
+            reverse=True,
+        )
+        visible = children[:top]
+        omitted = len(children) - len(visible)
+        for index, child in enumerate(visible):
+            is_last = index == len(visible) - 1 and omitted == 0
+            connector = "`-- " if is_last else "|-- "
+            print(
+                f"{prefix}{connector}{child['name']}  "
+                f"[{human_size(child['bytes'])}]"
+            )
+            child_prefix = prefix + ("    " if is_last else "|   ")
+            render(child, child_prefix)
+        if omitted:
+            print(f"{prefix}`-- ... {omitted:,} more directories")
+
+    render(root, "")
 
 
 def print_report(
@@ -449,22 +498,27 @@ def print_report(
 
     depth = report["settings"]["depth"]
     for drive in report["drives"]:
-        largest = sorted(
-            drive["paths"], key=lambda item: item["bytes"], reverse=True
-        )[:top]
-        print(f"\nLargest paths on {drive['path']} (depth {depth})")
-        print_table(
-            ("Size", "Files", "Folders", "Path"),
-            [
-                (
-                    human_size(item["bytes"]),
-                    human_count(item["files"]),
-                    human_count(item["directories"]),
-                    item["path"],
-                )
-                for item in largest
-            ],
-        )
+        if "tree" in drive:
+            print(f"\nStorage tree for {drive['path']} (depth {depth})")
+            print_storage_tree(drive["tree"], top)
+        else:
+            # Schema 1 snapshots used a flat list at exactly one depth.
+            largest = sorted(
+                drive["paths"], key=lambda item: item["bytes"], reverse=True
+            )[:top]
+            print(f"\nLargest paths on {drive['path']} (depth {depth})")
+            print_table(
+                ("Size", "Files", "Folders", "Path"),
+                [
+                    (
+                        human_size(item["bytes"]),
+                        human_count(item["files"]),
+                        human_count(item["directories"]),
+                        item["path"],
+                    )
+                    for item in largest
+                ],
+            )
         scan = drive["scan"]
         print(
             f"  Indexed {human_size(scan['bytes'])} in "
@@ -491,7 +545,10 @@ def parse_args() -> argparse.Namespace:
         help="Path depth to report: 1 means direct children (default: 1).",
     )
     parser.add_argument(
-        "--top", type=int, default=15, help="Paths shown per drive (default: 15)."
+        "--top",
+        type=int,
+        default=15,
+        help="Children shown per directory in the tree (default: 15).",
     )
     parser.add_argument(
         "--workers",
