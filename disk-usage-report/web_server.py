@@ -516,13 +516,17 @@ class RequestHandler(BaseHTTPRequestHandler):
 
 def create_server(
     host: str = "127.0.0.1",
-    port: int = 8765,
+    port: int = 5336,
     history_directory: Path = DEFAULT_HISTORY_DIRECTORY,
 ) -> ApplicationServer:
     return ApplicationServer((host, port), history_directory)
 
 
-def serve(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = True) -> None:
+def serve(
+    host: str = "127.0.0.1",
+    port: int = 5336,
+    open_browser: bool = True,
+) -> None:
     server = create_server(host, port)
     actual_port = server.server_address[1]
     url = f"http://{host}:{actual_port}/"

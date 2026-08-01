@@ -22,7 +22,7 @@ python -m pip install -r requirements.txt
 python disk_usage_report.py
 ```
 
-The application opens at [http://127.0.0.1:8765](http://127.0.0.1:8765). It is
+The application opens at [http://127.0.0.1:5336](http://127.0.0.1:5336). It is
 served only on the local computer by default. Press `Ctrl+C` in the terminal to
 stop it.
 
