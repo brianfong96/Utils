@@ -93,13 +93,25 @@ h1 { margin: 0; font-size: clamp(32px, 5vw, 54px); line-height: 1.05; letter-spa
 h2 { margin: 0; font-size: 18px; letter-spacing: -0.02em; }
 .intro > p:last-child, .stage-text { margin: 14px 0 0; color: var(--muted); font-size: 16px; }
 
-.setup-card, .progress-panel, .drive-report, .metric, .report-toolbar {
+.setup-card, .progress-panel, .drive-report, .metric, .report-toolbar, .history-section {
   border: 1px solid var(--line);
   background: linear-gradient(145deg, rgba(22, 30, 43, 0.96), rgba(15, 21, 32, 0.96));
   box-shadow: var(--shadow);
 }
 
 .setup-card { padding: clamp(20px, 4vw, 38px); border-radius: 20px; }
+.history-section { margin-top: 18px; padding: 20px; border-radius: 16px; }
+.history-section[hidden] { display: none; }
+.history-heading { display: flex; justify-content: space-between; gap: 16px; align-items: end; margin-bottom: 12px; }
+.history-heading .eyebrow { margin-bottom: 5px; }
+.history-heading > span { color: var(--muted); font-size: 12px; }
+.history-list { display: grid; }
+.history-row { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(260px, auto) auto; gap: 16px; align-items: center; padding: 13px 0; border-top: 1px solid var(--line-soft); }
+.history-main { display: grid; min-width: 0; }
+.history-date { font-size: 13px; }
+.history-path { overflow: hidden; color: var(--muted); font: 11px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.history-details { color: var(--muted); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+.history-open { white-space: nowrap; }
 .setting-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; padding-bottom: 30px; }
 .setting { display: grid; gap: 10px; }
 .setting-label { display: flex; justify-content: space-between; align-items: center; font-weight: 680; }
@@ -249,6 +261,9 @@ details.leaf > summary .caret { visibility: hidden; }
   .search-control { grid-column: 1 / -1; }
   .node-row, .loose-row { grid-template-columns: minmax(210px, 1fr) 95px 65px; }
   .node-counts { display: none; }
+  .history-row { grid-template-columns: 1fr auto; }
+  .history-details { grid-row: 2; text-align: left; }
+  .history-open { grid-column: 2; grid-row: 1 / span 2; }
 }
 
 @media (max-width: 640px) {
@@ -261,4 +276,9 @@ details.leaf > summary .caret { visibility: hidden; }
   .report-toolbar { grid-template-columns: 1fr; }
   .search-control { grid-column: auto; }
   .path-entry { grid-template-columns: 1fr; }
+  .history-heading, .history-row { align-items: start; }
+  .history-heading { display: grid; }
+  .history-row { grid-template-columns: 1fr; }
+  .history-details, .history-open { grid-column: auto; grid-row: auto; }
+  .history-open { width: 100%; }
 }

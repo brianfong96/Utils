@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import gzip
 import json
 import os
+import re
 import threading
 import time
 import uuid
@@ -21,6 +23,107 @@ import scanner
 STATIC_DIRECTORY = Path(__file__).with_name("web")
 MAX_REQUEST_BYTES = 64 * 1024
 MAX_EVENTS = 20_000
+HISTORY_LIMIT = 10
+DEFAULT_HISTORY_DIRECTORY = Path(__file__).with_name(".history")
+SCAN_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+
+
+class HistoryStore:
+    """Persist a bounded set of compressed reports for later viewing."""
+
+    def __init__(self, directory: Path = DEFAULT_HISTORY_DIRECTORY) -> None:
+        self.directory = Path(directory)
+        self.index_path = self.directory / "index.json"
+        self._lock = threading.Lock()
+
+    def list(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return [dict(entry) for entry in self._read_index()]
+
+    def get(self, scan_id: str) -> dict[str, Any] | None:
+        if not SCAN_ID_PATTERN.fullmatch(scan_id):
+            return None
+        with self._lock:
+            entry = next(
+                (item for item in self._read_index() if item.get("id") == scan_id),
+                None,
+            )
+            if entry is None:
+                return None
+            try:
+                with gzip.open(
+                    self.directory / f"{scan_id}.json.gz", "rt", encoding="utf-8"
+                ) as report_file:
+                    report = json.load(report_file)
+            except (OSError, json.JSONDecodeError):
+                return None
+            return report if isinstance(report, dict) else None
+
+    def save(
+        self,
+        scan_id: str,
+        report: dict[str, Any],
+        config: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not SCAN_ID_PATTERN.fullmatch(scan_id):
+            raise ValueError("Invalid scan identifier.")
+
+        totals = {"bytes": 0, "files": 0, "directories": 0, "skipped": 0}
+        for drive in report.get("drives", []):
+            scan = drive.get("scan", {})
+            for key in totals:
+                totals[key] += int(scan.get(key, 0) or 0)
+        entry = {
+            "id": scan_id,
+            "created_at": report.get("created_at"),
+            "duration_seconds": report.get("duration_seconds", 0),
+            "roots": list(config["roots"]),
+            "workers": config["workers"],
+            "depth": config["depth"],
+            "drive_count": len(report.get("drives", [])),
+            **totals,
+        }
+
+        with self._lock:
+            self.directory.mkdir(parents=True, exist_ok=True)
+            report_path = self.directory / f"{scan_id}.json.gz"
+            report_temporary = self.directory / f"{scan_id}.json.gz.tmp"
+            with gzip.open(report_temporary, "wt", encoding="utf-8") as report_file:
+                json.dump(report, report_file, separators=(",", ":"))
+            os.replace(report_temporary, report_path)
+
+            entries = [
+                item for item in self._read_index() if item.get("id") != scan_id
+            ]
+            entries.insert(0, entry)
+            removed = entries[HISTORY_LIMIT:]
+            entries = entries[:HISTORY_LIMIT]
+
+            index_temporary = self.directory / "index.json.tmp"
+            index_temporary.write_text(
+                json.dumps(entries, indent=2), encoding="utf-8"
+            )
+            os.replace(index_temporary, self.index_path)
+            for old_entry in removed:
+                old_id = old_entry.get("id")
+                if isinstance(old_id, str) and SCAN_ID_PATTERN.fullmatch(old_id):
+                    (self.directory / f"{old_id}.json.gz").unlink(missing_ok=True)
+        return dict(entry)
+
+    def _read_index(self) -> list[dict[str, Any]]:
+        try:
+            payload = json.loads(self.index_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        if not isinstance(payload, list):
+            return []
+        return [
+            item
+            for item in payload
+            if isinstance(item, dict)
+            and isinstance(item.get("id"), str)
+            and SCAN_ID_PATTERN.fullmatch(item["id"])
+        ][:HISTORY_LIMIT]
 
 
 @dataclass
@@ -73,10 +176,11 @@ class ScanSession:
 
 
 class ScanManager:
-    def __init__(self) -> None:
+    def __init__(self, history_store: HistoryStore) -> None:
         self._lock = threading.Lock()
         self._sessions: dict[str, ScanSession] = {}
         self._active_id: str | None = None
+        self._history_store = history_store
 
     def start(self, config: dict[str, Any]) -> ScanSession:
         with self._lock:
@@ -138,12 +242,18 @@ class ScanManager:
             if session.cancel_event.is_set():
                 raise scanner.ScanCancelled
             session.report = report
+            history_saved = True
+            try:
+                self._history_store.save(session.scan_id, report, config)
+            except (OSError, ValueError):
+                history_saved = False
             session.status = "complete"
             session.emit(
                 "complete",
                 {
                     "scan_id": session.scan_id,
                     "duration_seconds": report["duration_seconds"],
+                    "history_saved": history_saved,
                 },
             )
         except scanner.ScanCancelled:
@@ -199,9 +309,14 @@ def normalize_config(payload: dict[str, Any]) -> dict[str, Any]:
 class ApplicationServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address: tuple[str, int]) -> None:
+    def __init__(
+        self,
+        address: tuple[str, int],
+        history_directory: Path = DEFAULT_HISTORY_DIRECTORY,
+    ) -> None:
         super().__init__(address, RequestHandler)
-        self.scan_manager = ScanManager()
+        self.history_store = HistoryStore(history_directory)
+        self.scan_manager = ScanManager(self.history_store)
 
 
 class RequestHandler(BaseHTTPRequestHandler):
@@ -243,8 +358,18 @@ class RequestHandler(BaseHTTPRequestHandler):
                 },
             )
             return
+        if parsed.path == "/api/history":
+            self._json(HTTPStatus.OK, {"history": self.server.history_store.list()})
+            return
 
         parts = [part for part in parsed.path.split("/") if part]
+        if len(parts) == 3 and parts[:2] == ["api", "history"]:
+            report = self.server.history_store.get(parts[2])
+            if report is None:
+                self._json(HTTPStatus.NOT_FOUND, {"error": "Saved scan not found."})
+            else:
+                self._json(HTTPStatus.OK, {"report": report})
+            return
         if len(parts) == 3 and parts[:2] == ["api", "scans"]:
             session = self.server.scan_manager.get(parts[2])
             if session is None:
@@ -389,8 +514,12 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.close_connection = True
 
 
-def create_server(host: str = "127.0.0.1", port: int = 8765) -> ApplicationServer:
-    return ApplicationServer((host, port))
+def create_server(
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    history_directory: Path = DEFAULT_HISTORY_DIRECTORY,
+) -> ApplicationServer:
+    return ApplicationServer((host, port), history_directory)
 
 
 def serve(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = True) -> None:

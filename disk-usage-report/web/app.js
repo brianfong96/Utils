@@ -35,9 +35,19 @@ function formatCount(value) {
 
 function formatElapsed(seconds) {
   const whole = Math.max(0, Math.floor(seconds));
-  const minutes = String(Math.floor(whole / 60)).padStart(2, "0");
+  const hours = Math.floor(whole / 3600);
+  const minutes = String(Math.floor((whole % 3600) / 60)).padStart(2, "0");
   const remainder = String(whole % 60).padStart(2, "0");
-  return `${minutes}:${remainder}`;
+  return hours ? `${String(hours).padStart(2, "0")}:${minutes}:${remainder}` : `${minutes}:${remainder}`;
+}
+
+function formatScanDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown date";
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short"
+  }).format(date);
 }
 
 function percentage(value, parent) {
@@ -145,6 +155,65 @@ async function loadConfiguration() {
   } catch (error) {
     setError(byId("setup-error"), error.message);
     byId("drive-list").replaceChildren();
+  }
+  await loadHistory();
+}
+
+function historyRootLabel(roots) {
+  if (!Array.isArray(roots) || !roots.length) return "No roots recorded";
+  if (roots.length === 1) return roots[0];
+  return `${roots[0]} + ${roots.length - 1} more`;
+}
+
+function renderHistory(entries) {
+  const section = byId("history-section");
+  const list = byId("history-list");
+  list.replaceChildren();
+  section.hidden = !entries.length;
+  for (const entry of entries) {
+    const row = document.createElement("article");
+    row.className = "history-row";
+    const main = document.createElement("div");
+    main.className = "history-main";
+    main.append(
+      createText("strong", "history-date", formatScanDate(entry.created_at)),
+      createText("span", "history-path", historyRootLabel(entry.roots))
+    );
+    const details = createText(
+      "span",
+      "history-details",
+      `${formatBytes(entry.bytes)} indexed · ${formatElapsed(entry.duration_seconds)} · depth ${entry.depth} · ${entry.workers} workers`
+    );
+    const open = createText("button", "secondary-button history-open", "Open report");
+    open.type = "button";
+    open.addEventListener("click", () => openHistoryReport(entry, open));
+    row.append(main, details, open);
+    list.append(row);
+  }
+}
+
+async function loadHistory() {
+  try {
+    const payload = await request("/api/history");
+    renderHistory(payload.history || []);
+  } catch (error) {
+    byId("history-section").hidden = true;
+  }
+}
+
+async function openHistoryReport(entry, button) {
+  button.disabled = true;
+  const original = button.textContent;
+  button.textContent = "Opening…";
+  try {
+    const payload = await request(`/api/history/${encodeURIComponent(entry.id)}`);
+    renderReport(payload.report, entry);
+    showView("report-view");
+  } catch (error) {
+    setError(byId("setup-error"), error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
   }
 }
 
@@ -452,7 +521,7 @@ function metric(label, value) {
   return item;
 }
 
-function renderReport(report) {
+function renderReport(report, historyEntry = null) {
   reportBindings = [];
   reportRoots = [];
   reportDepth = Number(report.settings?.depth) || 1;
@@ -462,7 +531,8 @@ function renderReport(report) {
     sum.directories += Number(drive.scan?.directories) || 0;
     return sum;
   }, { bytes: 0, files: 0, directories: 0 });
-  byId("report-meta").textContent = `Completed in ${formatElapsed(report.duration_seconds)} · depth ${reportDepth} · ${report.settings.workers} workers`;
+  const savedAt = historyEntry ? `${formatScanDate(historyEntry.created_at)} · ` : "";
+  byId("report-meta").textContent = `${savedAt}Completed in ${formatElapsed(report.duration_seconds)} · depth ${reportDepth} · ${report.settings.workers} workers`;
   const metrics = byId("report-metrics");
   metrics.replaceChildren(
     metric("Drives / roots", formatCount(report.drives.length)),
@@ -509,7 +579,10 @@ byId("path-input").addEventListener("keydown", event => {
 });
 byId("scan-form").addEventListener("submit", startScan);
 byId("cancel-scan").addEventListener("click", cancelOrReturn);
-byId("new-scan").addEventListener("click", () => showView("setup-view"));
+byId("new-scan").addEventListener("click", async () => {
+  await loadHistory();
+  showView("setup-view");
+});
 byId("report-search").addEventListener("input", applyReportFilters);
 byId("minimum-size").addEventListener("input", applyReportFilters);
 byId("minimum-unit").addEventListener("change", applyReportFilters);

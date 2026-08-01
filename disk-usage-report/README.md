@@ -6,7 +6,16 @@ worker activity, and renders a searchable size tree when the scan completes.
 
 ## Run the application
 
-From this directory:
+On Windows, double-click **`Start Disk Usage Report.cmd`** in File Explorer.
+It starts the local server and opens the application in your default browser.
+Keep the command window open while using the application; close it or press
+`Ctrl+C` to stop the server.
+
+The launcher uses a local `.venv` when one exists, otherwise it uses the
+installed Python 3 launcher or `python` command. Install the optional drive
+discovery dependency with `python -m pip install -r requirements.txt`.
+
+To start it from a terminal instead, run these commands from this directory:
 
 ```powershell
 python -m pip install -r requirements.txt
@@ -84,3 +93,14 @@ python scanner.py --drive C:\ --drive D:\ --workers 16 --depth 2
 ```
 
 JSON snapshots from the earlier flat-report format remain readable.
+
+## Recent scan history
+
+Every completed browser scan is saved locally and appears under **Recent
+scans** on the start page. Each entry shows when the scan ran, how long it took,
+the roots and settings used, and the indexed size. Select **Open report** to
+view the complete interactive report without scanning again.
+
+The newest 10 completed reports are retained as compressed JSON in `.history/`.
+Older reports are removed automatically, and the directory is excluded from
+Git. Cancelled or failed scans are not added to history.
