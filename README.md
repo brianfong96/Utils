@@ -5,5 +5,5 @@ documentation, and generated-file exclusions in its own directory.
 
 ## Tools
 
-- [Disk Usage Report](disk-usage-report/README.md) — parallel drive analysis,
-  nested size trees, reusable snapshots, and interactive HTML reports.
+- [Disk Usage Report](disk-usage-report/README.md) — a localhost application
+  with configurable parallel scans, live worker activity, and interactive trees.
