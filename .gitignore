@@ -1,0 +1,3 @@
+# Legacy artifacts created before utilities were moved into their own folders.
+/__pycache__/
+/disk-report.json

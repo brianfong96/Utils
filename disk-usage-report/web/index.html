@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090d16">
+  <title>Disk Usage Report</title>
+  <link rel="icon" href="/favicon.ico?v=2" sizes="any">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2">
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="Disk Usage Report home">
+      <span id="brand-mark-frame" class="brand-mark-frame" aria-hidden="true">
+        <img id="brand-mark" class="brand-mark" src="/assets/app-icon.png?v=2" alt="" draggable="false">
+      </span>
+      <span>Disk Usage Report</span>
+    </a>
+    <span class="local-badge"><span class="status-dot"></span> Local only</span>
+  </header>
+
+  <main>
+    <section id="setup-view" class="view active" aria-labelledby="setup-title">
+      <div class="intro">
+        <p class="eyebrow">Storage clarity</p>
+        <h1 id="setup-title">See what is using your drives.</h1>
+        <p>Choose where to look, set the scan depth, and watch each worker map your storage in real time.</p>
+      </div>
+
+      <form id="scan-form" class="setup-card">
+        <div class="setting-grid">
+          <label class="setting">
+            <span class="setting-label">Workers <output id="workers-value">16</output></span>
+            <input id="workers" type="range" min="1" max="64" value="16">
+            <span class="setting-help">More workers suit SSDs; 4–8 is often better for one hard disk.</span>
+          </label>
+          <label class="setting">
+            <span class="setting-label">Tree depth <output id="depth-value">3</output></span>
+            <input id="depth" type="range" min="1" max="8" value="3">
+            <span class="setting-help">How many folder levels the final report expands.</span>
+          </label>
+        </div>
+
+        <fieldset>
+          <legend>Drives</legend>
+          <p class="field-help">Select any mounted drives to include.</p>
+          <div id="drive-list" class="drive-options" aria-live="polite">
+            <div class="skeleton-row"></div>
+            <div class="skeleton-row"></div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Additional paths</legend>
+          <p class="field-help">Add specific folders or network paths. Paths are read only by this local process.</p>
+          <div class="path-entry">
+            <input id="path-input" type="text" placeholder="C:\Users\you\Projects" autocomplete="off">
+            <button id="add-path" class="secondary-button" type="button">Add path</button>
+          </div>
+          <div id="path-list" class="path-list"></div>
+        </fieldset>
+
+        <div id="setup-error" class="inline-error" role="alert" hidden></div>
+        <button id="start-scan" class="primary-button" type="submit">
+          <span>Start scan</span><span aria-hidden="true">→</span>
+        </button>
+      </form>
+
+      <section id="history-section" class="history-section" aria-labelledby="history-title" hidden>
+        <div class="history-heading">
+          <div>
+            <p class="eyebrow">Saved locally</p>
+            <h2 id="history-title">Recent scans</h2>
+          </div>
+          <span>Latest 10 completed reports</span>
+        </div>
+        <div id="history-list" class="history-list"></div>
+      </section>
+    </section>
+
+    <section id="scan-view" class="view" aria-labelledby="scan-title">
+      <div class="scan-heading">
+        <div>
+          <p class="eyebrow">Live scan</p>
+          <h1 id="scan-title">Mapping your storage</h1>
+          <p id="scan-stage" class="stage-text">Starting workers…</p>
+        </div>
+        <div class="scan-actions">
+          <span id="elapsed-time" class="elapsed">00:00</span>
+          <button id="cancel-scan" class="danger-button" type="button">Cancel</button>
+        </div>
+      </div>
+
+      <ol id="scan-phases" class="scan-phases" aria-label="Scan phases">
+        <li class="scan-phase" data-phase="chunking">
+          <span class="phase-number">1</span>
+          <span><strong>Chunking</strong><small>Map and divide folders</small></span>
+        </li>
+        <li class="scan-phase" data-phase="scanning">
+          <span class="phase-number">2</span>
+          <span><strong>Scanning</strong><small>Measure files in parallel</small></span>
+        </li>
+        <li class="scan-phase" data-phase="generating">
+          <span class="phase-number">3</span>
+          <span><strong>Generating</strong><small>Build and save the report</small></span>
+        </li>
+      </ol>
+
+      <div class="progress-panel">
+        <div class="progress-copy">
+          <strong id="progress-label">Preparing scan</strong>
+          <span id="progress-stats">Discovering paths</span>
+        </div>
+        <div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div>
+      </div>
+
+      <div class="worker-heading">
+        <h2>Worker activity</h2>
+        <span id="active-workers">0 active</span>
+      </div>
+      <div id="worker-grid" class="worker-grid"></div>
+      <div id="scan-error" class="inline-error" role="alert" hidden></div>
+    </section>
+
+    <section id="report-view" class="view" aria-labelledby="report-title">
+      <div class="report-heading">
+        <div>
+          <p class="eyebrow">Scan complete</p>
+          <h1 id="report-title">Storage report</h1>
+          <p id="report-meta" class="stage-text"></p>
+        </div>
+        <button id="new-scan" class="secondary-button" type="button">New scan</button>
+      </div>
+
+      <div id="report-metrics" class="metric-grid"></div>
+      <div class="report-toolbar">
+        <label class="search-control">Search folders
+          <input id="report-search" type="search" placeholder="Users, Video, node_modules…" autocomplete="off">
+        </label>
+        <label>Minimum size
+          <span class="size-control">
+            <input id="minimum-size" type="number" min="0" step="0.1" value="0">
+            <select id="minimum-unit" aria-label="Minimum size unit">
+              <option value="1048576">MiB</option>
+              <option value="1073741824" selected>GiB</option>
+              <option value="1099511627776">TiB</option>
+            </select>
+          </span>
+        </label>
+        <button id="expand-report" class="secondary-button" type="button">Expand all</button>
+        <button id="collapse-report" class="secondary-button" type="button">Collapse all</button>
+      </div>
+      <p id="result-count" class="result-count" aria-live="polite"></p>
+      <div id="report-drives"></div>
+    </section>
+  </main>
+
+  <dialog id="drilldown-dialog" class="drilldown-dialog" aria-labelledby="drilldown-title">
+    <form id="drilldown-form" class="drilldown-form">
+      <div>
+        <p class="eyebrow">Focused scan</p>
+        <h2 id="drilldown-title">Scan this path deeper</h2>
+        <p class="dialog-help">Create a new report rooted at the selected folder.</p>
+      </div>
+      <label>Selected path
+        <input id="drilldown-path" type="text" readonly>
+      </label>
+      <div class="setting-grid dialog-settings">
+        <label class="setting">
+          <span class="setting-label">Workers <output id="drilldown-workers-value">16</output></span>
+          <input id="drilldown-workers" type="range" min="1" max="64" value="16">
+        </label>
+        <label class="setting">
+          <span class="setting-label">New depth <output id="drilldown-depth-value">4</output></span>
+          <input id="drilldown-depth" type="range" min="1" max="8" value="4">
+        </label>
+      </div>
+      <div id="drilldown-error" class="inline-error" role="alert" hidden></div>
+      <div class="dialog-actions">
+        <button id="cancel-drilldown" class="secondary-button" type="button">Cancel</button>
+        <button id="start-drilldown" class="primary-button" type="submit">Start deeper scan</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/assets/app.js" defer></script>
+</body>
+</html>
