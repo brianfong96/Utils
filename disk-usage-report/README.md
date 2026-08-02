@@ -61,11 +61,13 @@ currently reading and its current chunk totals. The scan can be cancelled.
 
 ## Interactive report
 
-The completed report stays in the browser and includes every directory through
+The completed report stays in the app and includes every directory through
 the selected depth—there is no terminal `--top` truncation. It provides:
 
 - folder/path search and a minimum-size filter;
 - expand-all, collapse-all, and per-folder disclosure controls;
+- a **Scan deeper** action on every folder, with focused worker and depth
+  controls for a new scan rooted at that path;
 - responsive bars showing each child as a percentage of its parent; and
 - a calculated **Loose files in this folder** row equal to the parent total
   minus the total of its child folders.
@@ -73,6 +75,10 @@ the selected depth—there is no terminal `--top` truncation. It provides:
 For example, a 1 TB parent with three 200 GB child folders shows the remaining
 400 GB as loose files. At the final selected depth, the remainder is labeled as
 files and deeper folders because those deeper directories were not expanded.
+
+Large reports are transferred with fast compression and render folders lazily.
+Only roots and opened branches create interface elements, while search and size
+filters are debounced to keep typing and navigation responsive.
 
 ## Optional batch reports
 

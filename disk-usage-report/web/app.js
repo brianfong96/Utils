@@ -12,6 +12,13 @@ let scanTerminal = false;
 let reportBindings = [];
 let reportRoots = [];
 let reportDepth = 3;
+let currentReport = null;
+let reportFilterTimer = null;
+let activeTreeFilter = { query: "", minimum: 0, visibility: null };
+let totalReportNodes = 0;
+let visibleReportNodes = 0;
+let currentTreeRoots = [];
+let nodeSearchIndex = new WeakMap();
 const scanPhaseOrder = ["chunking", "scanning", "generating"];
 
 function showView(id) {
@@ -146,6 +153,7 @@ function addCustomPath() {
 }
 
 async function loadConfiguration() {
+  const historyPromise = loadHistory();
   try {
     const config = await request("/api/config");
     byId("workers").value = config.defaults.workers;
@@ -157,7 +165,7 @@ async function loadConfiguration() {
     setError(byId("setup-error"), error.message);
     byId("drive-list").replaceChildren();
   }
-  await loadHistory();
+  await historyPromise;
 }
 
 function historyRootLabel(roots) {
@@ -207,8 +215,8 @@ async function openHistoryReport(entry, button) {
   const original = button.textContent;
   button.textContent = "Opening…";
   try {
-    const payload = await request(`/api/history/${encodeURIComponent(entry.id)}`);
-    renderReport(payload.report, entry);
+    const report = await request(`/api/history/${encodeURIComponent(entry.id)}/report`);
+    renderReport(report, entry);
     showView("report-view");
   } catch (error) {
     setError(byId("setup-error"), error.message);
@@ -335,13 +343,19 @@ function listenForScan(scanId) {
   eventSource.addEventListener("stage", event => handleStage(JSON.parse(event.data)));
   eventSource.addEventListener("worker", event => updateWorker(JSON.parse(event.data)));
   eventSource.addEventListener("progress", event => handleProgress(JSON.parse(event.data)));
-  eventSource.addEventListener("complete", async () => {
+  eventSource.addEventListener("complete", async event => {
     closeEvents();
     stopElapsedTimer();
     scanTerminal = true;
     try {
-      const state = await request(`/api/scans/${scanId}`);
-      renderReport(state.report);
+      const completion = JSON.parse(event.data);
+      if (completion.history_saved) {
+        const report = await request(`/api/history/${scanId}/report`);
+        renderReport(report);
+      } else {
+        const state = await request(`/api/scans/${scanId}`);
+        renderReport(state.report);
+      }
       showView("report-view");
     } catch (error) {
       failScan(error.message);
@@ -368,6 +382,27 @@ function failScan(message) {
   byId("progress-fill").classList.remove("indeterminate");
 }
 
+async function launchScan({ workers, depth, roots }) {
+  const response = await request("/api/scans", {
+    method: "POST",
+    body: JSON.stringify({ workers, depth, roots })
+  });
+  activeScanId = response.id;
+  scanTerminal = false;
+  setError(byId("scan-error"));
+  byId("cancel-scan").textContent = "Cancel";
+  byId("scan-stage").textContent = "Starting workers…";
+  byId("progress-label").textContent = "Preparing scan";
+  byId("progress-stats").textContent = "Discovering paths";
+  byId("progress-fill").style.width = "34%";
+  byId("progress-fill").classList.add("indeterminate");
+  updateScanPhase("chunking");
+  initializeWorkers(workers);
+  startElapsedTimer();
+  showView("scan-view");
+  listenForScan(response.id);
+}
+
 async function startScan(event) {
   event.preventDefault();
   setError(byId("setup-error"));
@@ -377,32 +412,18 @@ async function startScan(event) {
     setError(byId("setup-error"), "Select at least one drive or add a path.");
     return;
   }
-  const workers = Number(byId("workers").value);
-  const depth = Number(byId("depth").value);
-  byId("start-scan").disabled = true;
+  const startButton = byId("start-scan");
+  startButton.disabled = true;
   try {
-    const response = await request("/api/scans", {
-      method: "POST",
-      body: JSON.stringify({ workers, depth, roots })
+    await launchScan({
+      workers: Number(byId("workers").value),
+      depth: Number(byId("depth").value),
+      roots
     });
-    activeScanId = response.id;
-    scanTerminal = false;
-    setError(byId("scan-error"));
-    byId("cancel-scan").textContent = "Cancel";
-    byId("scan-stage").textContent = "Starting workers…";
-    byId("progress-label").textContent = "Preparing scan";
-    byId("progress-stats").textContent = "Discovering paths";
-    byId("progress-fill").style.width = "34%";
-    byId("progress-fill").classList.add("indeterminate");
-    updateScanPhase("chunking");
-    initializeWorkers(workers);
-    startElapsedTimer();
-    showView("scan-view");
-    listenForScan(response.id);
   } catch (error) {
     setError(byId("setup-error"), error.message);
   } finally {
-    byId("start-scan").disabled = false;
+    startButton.disabled = false;
   }
 }
 
@@ -438,12 +459,79 @@ function normalizeTree(drive) {
   };
 }
 
+function sortedChildren(node) {
+  return [...(node.children || [])].sort((a, b) => (Number(b.bytes) || 0) - (Number(a.bytes) || 0));
+}
+
+function calculateRemainder(node, children = node.children || []) {
+  const childBytes = children.reduce((sum, child) => sum + (Number(child.bytes) || 0), 0);
+  return Math.max(0, (Number(node.bytes) || 0) - childBytes);
+}
+
+function nodeVisibility(node) {
+  return activeTreeFilter.visibility?.get(node) || { visible: true, visibleChildren: 0, looseVisible: true };
+}
+
+function openDrilldownDialog(path) {
+  const workers = Number(currentReport?.settings?.workers) || Number(byId("workers").value) || 16;
+  const depth = Math.min(8, Math.max(2, reportDepth + 1));
+  byId("drilldown-path").value = path;
+  byId("drilldown-workers").value = workers;
+  byId("drilldown-workers-value").value = workers;
+  byId("drilldown-depth").value = depth;
+  byId("drilldown-depth-value").value = depth;
+  setError(byId("drilldown-error"));
+  byId("drilldown-dialog").showModal();
+}
+
+function renderLooseRow(remainder, bytes, level) {
+  const label = level >= reportDepth ? "Files and deeper folders" : "Loose files in this folder";
+  const looseElement = document.createElement("div");
+  looseElement.className = "loose-row";
+  const looseName = document.createElement("span");
+  looseName.className = "node-name";
+  looseName.append(createText("span", "loose-dot", ""), createText("span", "node-name-text", label));
+  const looseShare = percentage(remainder, bytes);
+  looseElement.append(
+    looseName,
+    createText("span", "node-size", formatBytes(remainder)),
+    createText("span", "node-percent", `${looseShare.toFixed(1)}%`),
+    createText("span", "node-counts", "Remainder of parent total")
+  );
+  const looseTrack = createText("span", "share-track", "");
+  const looseFill = createText("span", "share-fill", "");
+  looseFill.style.width = `${looseShare}%`;
+  looseTrack.append(looseFill);
+  looseElement.append(looseTrack);
+  return looseElement;
+}
+
+function ensureChildrenRendered(binding) {
+  if (binding.childrenRendered) return;
+  binding.childrenRendered = true;
+  const fragment = document.createDocumentFragment();
+  for (const child of binding.childrenData) {
+    if (!nodeVisibility(child).visible) continue;
+    const childBinding = renderTreeNode(child, binding.bytes, binding.level + 1);
+    binding.children.push(childBinding);
+    fragment.append(childBinding.element);
+  }
+  const info = nodeVisibility(binding.node);
+  if (binding.remainder > 0 && info.looseVisible) {
+    binding.looseElement = renderLooseRow(binding.remainder, binding.bytes, binding.level);
+    fragment.append(binding.looseElement);
+  }
+  if (!binding.children.length && !binding.looseElement) binding.details.classList.add("leaf");
+  binding.container.append(fragment);
+}
+
 function renderTreeNode(node, parentBytes, level) {
   const details = document.createElement("details");
   details.className = "tree-node";
-  details.open = level < 2;
   const bytes = Number(node.bytes) || 0;
   const share = percentage(bytes, parentBytes);
+  const visibility = nodeVisibility(node);
+  details.open = level === 0 || Boolean(activeTreeFilter.query && visibility.visibleChildren);
 
   const summary = document.createElement("summary");
   summary.className = "node-row";
@@ -455,7 +543,18 @@ function renderTreeNode(node, parentBytes, level) {
     name,
     createText("span", "node-size", formatBytes(bytes)),
     createText("span", "node-percent", `${share.toFixed(1)}%`),
-    createText("span", "node-counts", `${formatCount(node.files)} files · ${formatCount(node.directories)} folders`)
+    createText("span", "node-counts", `${formatCount(node.files)} files · ${formatCount(node.directories)} folders`),
+    (() => {
+      const button = createText("button", "drilldown-button", "Scan deeper");
+      button.type = "button";
+      button.title = `Scan ${node.path || node.name} with a deeper tree`;
+      button.addEventListener("click", event => {
+        event.preventDefault();
+        event.stopPropagation();
+        openDrilldownDialog(node.path || node.name);
+      });
+      return button;
+    })()
   );
   const track = createText("span", "share-track", "");
   const fill = createText("span", "share-fill", "");
@@ -466,57 +565,30 @@ function renderTreeNode(node, parentBytes, level) {
 
   const container = document.createElement("div");
   container.className = "children";
-  const children = [...(node.children || [])].sort((a, b) => b.bytes - a.bytes);
-  const childBindings = [];
-  let childBytes = 0;
-  for (const child of children) {
-    childBytes += Number(child.bytes) || 0;
-    const rendered = renderTreeNode(child, bytes, level + 1);
-    childBindings.push(rendered.binding);
-    container.append(rendered.element);
-  }
-
-  const remainder = Math.max(0, bytes - childBytes);
-  let looseElement = null;
-  if (remainder > 0) {
-    const label = level >= reportDepth ? "Files and deeper folders" : "Loose files in this folder";
-    looseElement = document.createElement("div");
-    looseElement.className = "loose-row";
-    const looseName = document.createElement("span");
-    looseName.className = "node-name";
-    looseName.append(createText("span", "loose-dot", ""), createText("span", "node-name-text", label));
-    const looseShare = percentage(remainder, bytes);
-    looseElement.append(
-      looseName,
-      createText("span", "node-size", formatBytes(remainder)),
-      createText("span", "node-percent", `${looseShare.toFixed(1)}%`),
-      createText("span", "node-counts", "Remainder of parent total")
-    );
-    const looseTrack = createText("span", "share-track", "");
-    const looseFill = createText("span", "share-fill", "");
-    looseFill.style.width = `${looseShare}%`;
-    looseTrack.append(looseFill);
-    looseElement.append(looseTrack);
-    container.append(looseElement);
-  }
-  if (!children.length && !looseElement) details.classList.add("leaf");
   details.append(container);
 
   const binding = {
+    node,
     element: details,
     details,
-    searchText: `${node.name || ""} ${node.path || ""}`.toLocaleLowerCase(),
+    container,
     bytes,
-    children: childBindings,
-    looseElement,
-    looseBytes: remainder,
-    level
+    childrenData: sortedChildren(node),
+    children: [],
+    childrenRendered: false,
+    looseElement: null,
+    remainder: calculateRemainder(node),
+    level,
   };
   reportBindings.push(binding);
-  return { element: details, binding };
+  details.addEventListener("toggle", () => {
+    if (details.open) ensureChildrenRendered(binding);
+  });
+  if (details.open) ensureChildrenRendered(binding);
+  return binding;
 }
 
-function renderDriveReport(drive) {
+function renderDriveReport(drive, driveIndex) {
   const section = document.createElement("section");
   section.className = "drive-report";
   const header = document.createElement("div");
@@ -531,9 +603,14 @@ function renderDriveReport(drive) {
   capacity.append(capacityFill);
   header.append(title, capacity);
   const tree = createText("div", "tree", "");
-  const rendered = renderTreeNode(normalizeTree(drive), null, 0);
-  reportRoots.push(rendered.binding);
-  tree.append(rendered.element);
+  const rootNode = currentTreeRoots[driveIndex];
+  if (nodeVisibility(rootNode).visible) {
+    const rootBinding = renderTreeNode(rootNode, null, 0);
+    reportRoots.push(rootBinding);
+    tree.append(rootBinding.element);
+  } else {
+    tree.append(createText("p", "empty-tree", "No folders match the current filters."));
+  }
   section.append(header, tree);
   return section;
 }
@@ -545,9 +622,59 @@ function metric(label, value) {
   return item;
 }
 
-function renderReport(report, historyEntry = null) {
+function countTreeNodes(roots) {
+  let count = 0;
+  const stack = [...roots];
+  while (stack.length) {
+    const node = stack.pop();
+    count += 1;
+    stack.push(...(node.children || []));
+  }
+  return count;
+}
+
+function evaluateTreeFilter(node, query, minimum, visibility) {
+  let visibleChildren = 0;
+  let visibleCount = 0;
+  for (const child of node.children || []) {
+    const childResult = evaluateTreeFilter(child, query, minimum, visibility);
+    if (childResult.visible) visibleChildren += 1;
+    visibleCount += childResult.count;
+  }
+  let searchMatches = true;
+  if (query) {
+    let searchText = nodeSearchIndex.get(node);
+    if (searchText === undefined) {
+      searchText = `${node.name || ""} ${node.path || ""}`.toLowerCase();
+      nodeSearchIndex.set(node, searchText);
+    }
+    searchMatches = searchText.includes(query);
+  }
+  const selfMatches = searchMatches && (Number(node.bytes) || 0) >= minimum;
+  const looseVisible = calculateRemainder(node) >= minimum && searchMatches;
+  const visible = selfMatches || visibleChildren > 0 || looseVisible;
+  const result = {
+    visible,
+    count: visible ? visibleCount + 1 : 0,
+    visibleChildren,
+    looseVisible
+  };
+  visibility.set(node, result);
+  return result;
+}
+
+function renderReportTrees() {
   reportBindings = [];
   reportRoots = [];
+  const drives = byId("report-drives");
+  drives.replaceChildren(...currentReport.drives.map(renderDriveReport));
+  byId("result-count").textContent = `Showing ${formatCount(visibleReportNodes)} of ${formatCount(totalReportNodes)} directories. Open folders to load their children.`;
+}
+
+function renderReport(report, historyEntry = null) {
+  currentReport = report;
+  currentTreeRoots = report.drives.map(normalizeTree);
+  nodeSearchIndex = new WeakMap();
   reportDepth = Number(report.settings?.depth) || 1;
   const totals = report.drives.reduce((sum, drive) => {
     sum.bytes += Number(drive.scan?.bytes) || 0;
@@ -565,34 +692,73 @@ function renderReport(report, historyEntry = null) {
     metric("Folders", formatCount(totals.directories)),
     metric("Skipped", formatCount(report.drives.reduce((sum, drive) => sum + (drive.scan?.skipped || 0), 0)))
   );
-  const drives = byId("report-drives");
-  drives.replaceChildren(...report.drives.map(renderDriveReport));
   byId("report-search").value = "";
   byId("minimum-size").value = "0";
+  totalReportNodes = countTreeNodes(currentTreeRoots);
   applyReportFilters();
 }
 
-function filterReportNode(binding, query, minimum, inheritedMatch = false) {
-  const selfMatch = !query || binding.searchText.includes(query);
-  const branchMatch = inheritedMatch || selfMatch;
-  let visibleChildren = 0;
-  for (const child of binding.children) {
-    if (filterReportNode(child, query, minimum, branchMatch)) visibleChildren += 1;
+function applyReportFilters() {
+  if (!currentReport) return;
+  const query = byId("report-search").value.trim().toLowerCase();
+  const minimum = (Number(byId("minimum-size").value) || 0) * Number(byId("minimum-unit").value);
+  if (!query && minimum === 0) {
+    activeTreeFilter = { query, minimum, visibility: null };
+    visibleReportNodes = totalReportNodes;
+  } else {
+    const visibility = new WeakMap();
+    visibleReportNodes = 0;
+    for (const rootNode of currentTreeRoots) {
+      visibleReportNodes += evaluateTreeFilter(rootNode, query, minimum, visibility).count;
+    }
+    activeTreeFilter = { query, minimum, visibility };
   }
-  const looseVisible = Boolean(binding.looseElement) && binding.looseBytes >= minimum && branchMatch;
-  if (binding.looseElement) binding.looseElement.hidden = !looseVisible;
-  const visible = (binding.bytes >= minimum && branchMatch) || visibleChildren > 0 || looseVisible;
-  binding.element.hidden = !visible;
-  if (query && (visibleChildren || looseVisible)) binding.details.open = true;
-  return visible;
+  renderReportTrees();
 }
 
-function applyReportFilters() {
-  const query = byId("report-search").value.trim().toLocaleLowerCase();
-  const minimum = (Number(byId("minimum-size").value) || 0) * Number(byId("minimum-unit").value);
-  for (const root of reportRoots) filterReportNode(root, query, minimum);
-  const visible = reportBindings.filter(binding => !binding.element.hidden).length;
-  byId("result-count").textContent = `Showing ${formatCount(visible)} of ${formatCount(reportBindings.length)} directories. Bars are relative to each parent.`;
+function scheduleReportFilters() {
+  clearTimeout(reportFilterTimer);
+  reportFilterTimer = setTimeout(applyReportFilters, 140);
+}
+
+async function expandAllReportNodes() {
+  const button = byId("expand-report");
+  const originalLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = "Expanding…";
+  const queue = [...reportRoots];
+  let index = 0;
+  while (index < queue.length) {
+    const batchEnd = Math.min(index + 120, queue.length);
+    for (; index < batchEnd; index += 1) {
+      const binding = queue[index];
+      binding.details.open = true;
+      ensureChildrenRendered(binding);
+      queue.push(...binding.children);
+    }
+    await new Promise(resolve => requestAnimationFrame(resolve));
+  }
+  button.disabled = false;
+  button.textContent = originalLabel;
+}
+
+async function startDrilldown(event) {
+  event.preventDefault();
+  const button = byId("start-drilldown");
+  button.disabled = true;
+  setError(byId("drilldown-error"));
+  try {
+    await launchScan({
+      roots: [byId("drilldown-path").value],
+      workers: Number(byId("drilldown-workers").value),
+      depth: Number(byId("drilldown-depth").value)
+    });
+    byId("drilldown-dialog").close();
+  } catch (error) {
+    setError(byId("drilldown-error"), error.message);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 byId("workers").addEventListener("input", event => { byId("workers-value").value = event.target.value; });
@@ -607,14 +773,16 @@ byId("new-scan").addEventListener("click", async () => {
   await loadHistory();
   showView("setup-view");
 });
-byId("report-search").addEventListener("input", applyReportFilters);
-byId("minimum-size").addEventListener("input", applyReportFilters);
+byId("report-search").addEventListener("input", scheduleReportFilters);
+byId("minimum-size").addEventListener("input", scheduleReportFilters);
 byId("minimum-unit").addEventListener("change", applyReportFilters);
-byId("expand-report").addEventListener("click", () => {
-  for (const binding of reportBindings) if (!binding.element.hidden) binding.details.open = true;
-});
+byId("expand-report").addEventListener("click", expandAllReportNodes);
 byId("collapse-report").addEventListener("click", () => {
   for (const binding of reportBindings) binding.details.open = binding.level === 0;
 });
+byId("drilldown-workers").addEventListener("input", event => { byId("drilldown-workers-value").value = event.target.value; });
+byId("drilldown-depth").addEventListener("input", event => { byId("drilldown-depth-value").value = event.target.value; });
+byId("drilldown-form").addEventListener("submit", startDrilldown);
+byId("cancel-drilldown").addEventListener("click", () => byId("drilldown-dialog").close());
 
 loadConfiguration();

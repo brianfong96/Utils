@@ -154,6 +154,34 @@
     </section>
   </main>
 
+  <dialog id="drilldown-dialog" class="drilldown-dialog" aria-labelledby="drilldown-title">
+    <form id="drilldown-form" class="drilldown-form">
+      <div>
+        <p class="eyebrow">Focused scan</p>
+        <h2 id="drilldown-title">Scan this path deeper</h2>
+        <p class="dialog-help">Create a new report rooted at the selected folder.</p>
+      </div>
+      <label>Selected path
+        <input id="drilldown-path" type="text" readonly>
+      </label>
+      <div class="setting-grid dialog-settings">
+        <label class="setting">
+          <span class="setting-label">Workers <output id="drilldown-workers-value">16</output></span>
+          <input id="drilldown-workers" type="range" min="1" max="64" value="16">
+        </label>
+        <label class="setting">
+          <span class="setting-label">New depth <output id="drilldown-depth-value">4</output></span>
+          <input id="drilldown-depth" type="range" min="1" max="8" value="4">
+        </label>
+      </div>
+      <div id="drilldown-error" class="inline-error" role="alert" hidden></div>
+      <div class="dialog-actions">
+        <button id="cancel-drilldown" class="secondary-button" type="button">Cancel</button>
+        <button id="start-drilldown" class="primary-button" type="submit">Start deeper scan</button>
+      </div>
+    </form>
+  </dialog>
+
   <script src="/assets/app.js" defer></script>
 </body>
 </html>

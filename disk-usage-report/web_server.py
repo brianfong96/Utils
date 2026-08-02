@@ -23,6 +23,7 @@ import scanner
 STATIC_DIRECTORY = Path(__file__).with_name("web")
 MAX_REQUEST_BYTES = 64 * 1024
 MAX_EVENTS = 20_000
+JSON_COMPRESSION_MIN_BYTES = 16 * 1024
 HISTORY_LIMIT = 10
 DEFAULT_HISTORY_DIRECTORY = Path(__file__).with_name(".history")
 SCAN_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
@@ -58,6 +59,18 @@ class HistoryStore:
             except (OSError, json.JSONDecodeError):
                 return None
             return report if isinstance(report, dict) else None
+
+    def get_compressed(self, scan_id: str) -> bytes | None:
+        """Read a saved report without decoding and re-encoding its JSON."""
+        if not SCAN_ID_PATTERN.fullmatch(scan_id):
+            return None
+        with self._lock:
+            if not any(item.get("id") == scan_id for item in self._read_index()):
+                return None
+            try:
+                return (self.directory / f"{scan_id}.json.gz").read_bytes()
+            except OSError:
+                return None
 
     def save(
         self,
@@ -376,6 +389,13 @@ class RequestHandler(BaseHTTPRequestHandler):
             return
 
         parts = [part for part in parsed.path.split("/") if part]
+        if (
+            len(parts) == 4
+            and parts[:2] == ["api", "history"]
+            and parts[3] == "report"
+        ):
+            self._saved_report(parts[2])
+            return
         if len(parts) == 3 and parts[:2] == ["api", "history"]:
             report = self.server.history_store.get(parts[2])
             if report is None:
@@ -486,8 +506,37 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def _json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
         content = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        accepts_gzip = "gzip" in self.headers.get("Accept-Encoding", "").lower()
+        compressed = accepts_gzip and len(content) >= JSON_COMPRESSION_MIN_BYTES
+        if compressed:
+            content = gzip.compress(content, compresslevel=1, mtime=0)
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        if compressed:
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Vary", "Accept-Encoding")
+        self.send_header("Content-Length", str(len(content)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(content)
+
+    def _saved_report(self, scan_id: str) -> None:
+        compressed = self.server.history_store.get_compressed(scan_id)
+        if compressed is None:
+            self._json(HTTPStatus.NOT_FOUND, {"error": "Saved scan not found."})
+            return
+        accepts_gzip = "gzip" in self.headers.get("Accept-Encoding", "").lower()
+        try:
+            content = compressed if accepts_gzip else gzip.decompress(compressed)
+        except (OSError, EOFError):
+            self._json(HTTPStatus.NOT_FOUND, {"error": "Saved scan is unreadable."})
+            return
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        if accepts_gzip:
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Vary", "Accept-Encoding")
         self.send_header("Content-Length", str(len(content)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
