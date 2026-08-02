@@ -52,13 +52,10 @@ button { color: inherit; }
 }
 
 .brand-mark {
-  width: 24px;
-  height: 24px;
-  border: 1px solid rgba(97, 214, 188, 0.55);
-  border-radius: 7px;
-  background:
-    linear-gradient(90deg, transparent 29%, rgba(97, 214, 188, 0.8) 30% 42%, transparent 43% 59%, rgba(110, 168, 255, 0.75) 60% 74%, transparent 75%),
-    #131c2a;
+  width: 29px;
+  height: 29px;
+  border-radius: 8px;
+  object-fit: contain;
   box-shadow: 0 0 22px rgba(97, 214, 188, 0.14);
 }
 

@@ -341,6 +341,15 @@ class RequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/assets/app.js":
             self._serve_file("app.js", "text/javascript; charset=utf-8")
             return
+        if parsed.path == "/assets/app-icon.png":
+            self._serve_file("app-icon.png", "image/png")
+            return
+        if parsed.path == "/apple-touch-icon.png":
+            self._serve_file("apple-touch-icon.png", "image/png")
+            return
+        if parsed.path == "/favicon.ico":
+            self._serve_file("favicon.ico", "image/x-icon")
+            return
         if parsed.path == "/api/config":
             drives = scanner.discover_drives()
             self._json(
