@@ -26,6 +26,19 @@ function showView(id) {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
+function installBrandIconFallback() {
+  const image = byId("brand-mark");
+  const frame = byId("brand-mark-frame");
+  const useFallback = () => frame.classList.add("icon-fallback");
+  const useImage = () => frame.classList.add("icon-loaded");
+  image.addEventListener("error", useFallback, { once: true });
+  image.addEventListener("load", useImage, { once: true });
+  if (image.complete) {
+    if (image.naturalWidth > 0) useImage();
+    else useFallback();
+  }
+}
+
 function formatBytes(value) {
   const units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
   let amount = Math.max(0, Number(value) || 0);
@@ -785,4 +798,5 @@ byId("drilldown-depth").addEventListener("input", event => { byId("drilldown-dep
 byId("drilldown-form").addEventListener("submit", startDrilldown);
 byId("cancel-drilldown").addEventListener("click", () => byId("drilldown-dialog").close());
 
+installBrandIconFallback();
 loadConfiguration();

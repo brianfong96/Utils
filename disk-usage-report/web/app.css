@@ -51,12 +51,54 @@ button { color: inherit; }
   letter-spacing: -0.01em;
 }
 
-.brand-mark {
+.brand-mark-frame {
   width: 29px;
   height: 29px;
+  position: relative;
+  flex: 0 0 29px;
+  overflow: hidden;
   border-radius: 8px;
-  object-fit: contain;
+  background: linear-gradient(145deg, #10253d, #081221);
   box-shadow: 0 0 22px rgba(97, 214, 188, 0.14);
+}
+
+.brand-mark-frame::before {
+  content: "";
+  position: absolute;
+  inset: 6px 14px 6px 5px;
+  border: 2px solid #61d6bc;
+  border-right: 0;
+  border-radius: 6px 0 0 6px;
+}
+
+.brand-mark-frame::after {
+  content: "";
+  position: absolute;
+  width: 10px;
+  height: 2px;
+  right: 4px;
+  top: 8px;
+  border-radius: 2px;
+  background: #61d6bc;
+  box-shadow: 0 6px #6ea8ff, 0 12px #efb85e;
+}
+
+.brand-mark {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  opacity: 0;
+}
+
+.brand-mark-frame.icon-loaded .brand-mark {
+  opacity: 1;
+}
+
+.brand-mark-frame.icon-fallback .brand-mark {
+  display: none;
 }
 
 .local-badge {

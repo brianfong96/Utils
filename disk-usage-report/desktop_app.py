@@ -17,6 +17,14 @@ from web_server import create_server
 APP_NAME = "Disk Usage Report"
 HOST = "127.0.0.1"
 PORT = 5336
+SMOKE_ASSETS = {
+    "/": b"<!doctype html>",
+    "/assets/app.css": b":root",
+    "/assets/app.js": b'"use strict"',
+    "/assets/app-icon.png?v=2": b"\x89PNG\r\n\x1a\n",
+    "/apple-touch-icon.png?v=2": b"\x89PNG\r\n\x1a\n",
+    "/favicon.ico?v=2": b"\x00\x00\x01\x00",
+}
 
 
 def application_history_directory() -> Path:
@@ -54,6 +62,16 @@ def show_error(message: str) -> None:
         print(f"{APP_NAME}: {message}", file=sys.stderr)
 
 
+def smoke_test_assets(base_url: str) -> bool:
+    """Verify every packaged UI asset needed to draw the branded window."""
+    for path, signature in SMOKE_ASSETS.items():
+        with urllib.request.urlopen(base_url + path, timeout=10) as response:
+            content_matches = response.read(len(signature)).startswith(signature)
+            if response.status != 200 or not content_matches:
+                return False
+    return True
+
+
 def run() -> int:
     history_directory = application_history_directory()
     migrate_source_history(history_directory)
@@ -80,8 +98,7 @@ def run() -> int:
 
     try:
         if smoke_test:
-            with urllib.request.urlopen(url, timeout=10) as response:
-                return 0 if response.status == 200 else 1
+            return 0 if smoke_test_assets(url.rstrip("/")) else 1
 
         try:
             import webview

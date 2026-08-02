@@ -38,4 +38,5 @@ executable = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=str(project_directory / "assets" / "app-icon.ico"),
+    version=str(project_directory / "version_info.txt"),
 )

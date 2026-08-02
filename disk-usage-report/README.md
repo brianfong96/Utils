@@ -19,7 +19,9 @@ window with no browser or background terminal. Its private local service uses
 `127.0.0.1:5336` only while the app is open.
 
 The generated storage-tree mark is embedded in the executable and reused for
-the browser favicon, touch icon, and in-app header branding.
+the browser favicon, touch icon, and in-app header branding. Versioned asset
+URLs prevent stale embedded-browser caches, and the header includes a compact
+branded fallback if an image request ever fails.
 
 Python 3 is required to build from source, but the resulting executable is
 standalone and can be run without installing Python or project dependencies.
