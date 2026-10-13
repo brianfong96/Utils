@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass
+from typing import Literal
 from urllib.parse import urlparse
 
 
@@ -19,9 +20,17 @@ class Target:
     title: str
     composer_id: tuple[int, ...]
     location: str = ""
+    app_name: str = "ChatGPT"
+    unavailable_reason: str = ""
 
 
-COMPOSER_NAMES = {"ask anything", "message chatgpt", "send a message", "message"}
+@dataclass(frozen=True)
+class SendResult:
+    status: Literal["submitted", "blocked"]
+    message: str
+
+
+COMPOSER_NAMES = {"ask anything", "message chatgpt", "send a message", "message", "work with codex"}
 SEND_NAMES = {"send", "send message", "send prompt"}
 STOP_NAMES = {"stop", "stop generating", "stop streaming"}
 BROWSER_NAMES = {"chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe", "vivaldi.exe"}
@@ -36,20 +45,30 @@ def read_text(control) -> str:
     from pywinauto.uia_defines import NoPatternInterfaceError
 
     try:
-        return control.get_value()
+        text = control.get_value()
     except NoPatternInterfaceError:
         try:
-            return control.iface_text.DocumentRange.GetText(-1).rstrip("\r\n")
+            text = control.iface_text.DocumentRange.GetText(-1).rstrip("\r\n")
         except NoPatternInterfaceError as error:
             raise AutomationError(
                 "The message box does not expose its contents. Nothing was sent."
             ) from error
+    # Chromium includes ProseMirror's generated empty-editor placeholder in UIA values.
+    if ("ProseMirror" in control.element_info.class_name.split()
+            and text.strip() == control.element_info.name.strip()):
+        children = control.children()
+        if (len(children) == 2
+                and children[0].element_info.name == control.element_info.name
+                and "ProseMirror-trailingBreak" in children[1].element_info.class_name.split()
+                and not children[1].element_info.name.strip()):
+            return ""
+    return text
 
 
-def composer(window):
+def composer(window, include_disabled: bool = False):
     candidates = []
     for control in window.descendants(control_type="Edit"):
-        if not control.is_visible() or not control.is_enabled():
+        if not control.is_visible() or (not include_disabled and not control.is_enabled()):
             continue
         info = control.element_info
         if info.automation_id == "prompt-textarea":
@@ -58,7 +77,7 @@ def composer(window):
             candidates.append((1, control))
     if not candidates:
         raise AutomationError(
-            "No accessible ChatGPT message box found. Keep the conversation tab visible "
+            "No accessible ChatGPT/Codex message box found. Keep the conversation tab visible "
             "and enable browser accessibility if needed."
         )
     best = max(rank for rank, _ in candidates)
@@ -78,7 +97,7 @@ def document_url(window) -> str:
             url = document.iface_value.CurrentValue
         except NoPatternInterfaceError:
             try:
-                url = document.iface_legacy_iaccessible.CurrentValue
+                url = document.legacy_properties()["Value"]
             except NoPatternInterfaceError:
                 continue
         if url:
@@ -90,9 +109,28 @@ def trusted_window(window) -> bool:
     import psutil
 
     name = psutil.Process(window.process_id()).name().casefold()
-    if name == "chatgpt.exe":
+    if name in {"chatgpt.exe", "codex.exe"}:
         return True
     return name in BROWSER_NAMES and is_chatgpt_url(document_url(window))
+
+
+def blocked_reason(field) -> str:
+    if not field.is_enabled():
+        return "The message box is disabled. Nothing typed or sent."
+    group = field.parent()
+    send_buttons = [
+        button for button in group.descendants(control_type="Button")
+        if button.is_visible() and button.element_info.name.strip().casefold() in SEND_NAMES
+    ]
+    if not send_buttons or any(button.is_enabled() for button in send_buttons):
+        return ""
+    for control in group.descendants(control_type="Text"):
+        text = control.element_info.name.strip().casefold().replace("\u2019", "'")
+        if control.is_visible() and (
+                text.startswith(("you're out of codex and work usage", "your workspace is out of credits"))
+                or text == "you've hit your usage limit"):
+            return "Out of credits or usage allowance. Nothing typed or sent."
+    return ""
 
 
 def discover() -> list[Target]:
@@ -106,10 +144,12 @@ def discover() -> list[Target]:
         try:
             if not trusted_window(window):
                 continue
-            field = composer(window)
+            field = composer(window, include_disabled=True)
             targets.append(Target(
                 window.handle, window.process_id(), window.window_text(),
                 tuple(field.element_info.runtime_id), document_url(window),
+                "Codex" if field.element_info.name.strip().casefold() == "work with codex" else "ChatGPT",
+                blocked_reason(field),
             ))
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
@@ -124,7 +164,7 @@ def check_target(window, target: Target):
         raise AutomationError("The selected ChatGPT window closed or changed. Nothing was sent.")
     if window.window_text() != target.title or document_url(window) != target.location:
         raise AutomationError("The selected conversation changed. Nothing was sent.")
-    field = composer(window)
+    field = composer(window, include_disabled=True)
     if tuple(field.element_info.runtime_id) != target.composer_id:
         raise AutomationError(
             "The selected conversation changed or reloaded. Refresh the window list and restart the timer."
@@ -132,10 +172,13 @@ def check_target(window, target: Target):
     return field
 
 
-def send_to_window(window, target: Target) -> None:
+def send_to_window(window, target: Target) -> SendResult:
     from pywinauto import keyboard
 
     field = check_target(window, target)
+    reason = blocked_reason(field)
+    if reason:
+        return SendResult("blocked", reason)
     if read_text(field).strip():
         raise AutomationError("The message box contains a draft. It was left untouched.")
     for button in window.descendants(control_type="Button"):
@@ -159,13 +202,16 @@ def send_to_window(window, target: Target) -> None:
     if read_text(field).strip() != "continue":
         raise AutomationError("Could not verify the typed message. Enter was not pressed.")
     check_target(window, target)
+    reason = blocked_reason(field)
+    if reason:
+        raise AutomationError(reason + ' The verified "continue" draft was left in the box.')
     if not field.has_keyboard_focus():
         raise AutomationError("Focus changed before sending. Enter was not pressed.")
     keyboard.send_keys("{ENTER}")
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
         if not read_text(field).strip():
-            return
+            return SendResult("submitted", 'Submitted "continue". The message box cleared; timer finished.')
         time.sleep(0.1)
     raise AutomationError(
         "Enter was pressed, but the message box did not clear. Check ChatGPT; "
@@ -173,11 +219,11 @@ def send_to_window(window, target: Target) -> None:
     )
 
 
-def send(target: Target) -> None:
+def send(target: Target) -> SendResult:
     from pywinauto import Desktop
 
     window = Desktop(backend="uia").window(handle=target.handle).wrapper_object()
-    send_to_window(window, target)
+    return send_to_window(window, target)
 
 
 def worker(operation: str, target: Target | None, queue) -> None:
@@ -185,8 +231,7 @@ def worker(operation: str, target: Target | None, queue) -> None:
         if operation == "discover":
             result = discover()
         elif operation == "send" and target is not None:
-            send(target)
-            result = None
+            result = send(target)
         else:
             raise AutomationError("Invalid automation operation.")
         queue.put(("ok", result))
