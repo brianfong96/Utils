@@ -156,13 +156,42 @@ class AutomationTests(unittest.TestCase):
 
     @patch("automation.trusted_window", return_value=True)
     @patch("pywinauto.keyboard.send_keys")
-    def test_credit_block_is_explicit_noop(self, keys, trust):
+    def test_credit_block_types_enters_and_keeps_continue(self, keys, trust):
         self.window.buttons = [Control(name="Send", enabled=False)]
         self.window.texts = [Control(name="You're out of Codex and Work usage")]
+        def type_keys(text, **kwargs):
+            if text != "{ENTER}":
+                self.field.text = text
+        keys.side_effect = type_keys
         result = send_to_window(self.window, self.target)
         self.assertEqual(result.status, "blocked")
         self.assertIn("Out of credits", result.message)
+        self.assertIn("pressed Enter", result.message)
+        self.assertEqual(self.field.text, "continue")
+        self.assertEqual([call.args[0] for call in keys.call_args_list], ["continue", "{ENTER}"])
+
+    @patch("automation.trusted_window", return_value=True)
+    @patch("pywinauto.keyboard.send_keys")
+    def test_credit_block_does_not_overwrite_existing_draft(self, keys, trust):
+        self.window.buttons = [Control(name="Send", enabled=False)]
+        self.window.texts = [Control(name="You're out of Codex and Work usage")]
+        self.field.text = "my unsent draft"
+        with self.assertRaisesRegex(AutomationError, "draft"):
+            send_to_window(self.window, self.target)
+        self.assertEqual(self.field.text, "my unsent draft")
         keys.assert_not_called()
+
+    @patch("automation.trusted_window", return_value=True)
+    @patch("pywinauto.keyboard.send_keys")
+    def test_old_credit_notice_does_not_block_available_send(self, keys, trust):
+        self.window.buttons = [Control(name="Send", enabled=True)]
+        self.window.texts = [Control(name="You're out of Codex and Work usage")]
+        def type_keys(text, **kwargs):
+            self.field.text = "" if text == "{ENTER}" else text
+        keys.side_effect = type_keys
+        result = send_to_window(self.window, self.target)
+        self.assertEqual(result.status, "submitted")
+        self.assertEqual(keys.call_count, 2)
 
     def test_empty_disabled_send_is_not_a_credit_block(self):
         self.window.buttons = [Control(name="Send", enabled=False)]

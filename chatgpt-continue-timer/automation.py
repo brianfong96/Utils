@@ -116,7 +116,7 @@ def trusted_window(window) -> bool:
 
 def blocked_reason(field) -> str:
     if not field.is_enabled():
-        return "The message box is disabled. Nothing typed or sent."
+        return "The message box is disabled."
     group = field.parent()
     send_buttons = [
         button for button in group.descendants(control_type="Button")
@@ -129,7 +129,7 @@ def blocked_reason(field) -> str:
         if control.is_visible() and (
                 text.startswith(("you're out of codex and work usage", "your workspace is out of credits"))
                 or text == "you've hit your usage limit"):
-            return "Out of credits or usage allowance. Nothing typed or sent."
+            return "Out of credits or usage allowance."
     return ""
 
 
@@ -176,9 +176,8 @@ def send_to_window(window, target: Target) -> SendResult:
     from pywinauto import keyboard
 
     field = check_target(window, target)
-    reason = blocked_reason(field)
-    if reason:
-        return SendResult("blocked", reason)
+    if not field.is_enabled():
+        return SendResult("blocked", "The message box is disabled. Nothing typed or sent.")
     if read_text(field).strip():
         raise AutomationError("The message box contains a draft. It was left untouched.")
     for button in window.descendants(control_type="Button"):
@@ -202,9 +201,9 @@ def send_to_window(window, target: Target) -> SendResult:
     if read_text(field).strip() != "continue":
         raise AutomationError("Could not verify the typed message. Enter was not pressed.")
     check_target(window, target)
-    reason = blocked_reason(field)
-    if reason:
-        raise AutomationError(reason + ' The verified "continue" draft was left in the box.')
+    if not field.is_enabled():
+        return SendResult("blocked", 'Typed "continue", but the message box became disabled '
+                          'before Enter. The draft was left in the box.')
     if not field.has_keyboard_focus():
         raise AutomationError("Focus changed before sending. Enter was not pressed.")
     keyboard.send_keys("{ENTER}")
@@ -212,6 +211,10 @@ def send_to_window(window, target: Target) -> SendResult:
     while time.monotonic() < deadline:
         if not read_text(field).strip():
             return SendResult("submitted", 'Submitted "continue". The message box cleared; timer finished.')
+        reason = blocked_reason(field)
+        if reason and read_text(field).strip() == "continue":
+            return SendResult("blocked", 'Typed "continue" and pressed Enter. ' + reason
+                              + ' The draft is still in the box; no retry will be made.')
         time.sleep(0.1)
     raise AutomationError(
         "Enter was pressed, but the message box did not clear. Check ChatGPT; "

@@ -40,9 +40,12 @@ English accessible message-box names or the `prompt-textarea` ID are supported.
 
 An out-of-credits Codex window still appears in the picker with an explanation.
 You can schedule a future check; the app rechecks when the timer expires.
-If the composer remains disabled, or its Send button is disabled alongside a
-visible credit-limit banner, the timer finishes with an explicit **nothing
-typed or sent** result. It cannot restore credits or bypass a usage limit.
+If the composer is editable and empty, the timer **types `continue` and presses
+Enter even when credits are exhausted**. If the credit limit blocks submission,
+`continue` is left visible in the input box and the timer reports the block.
+It does not clear that draft or retry automatically. If the input box itself is
+disabled, nothing can be typed and the timer reports that instead. It cannot
+restore credits or bypass a usage limit.
 
 It refuses non-ChatGPT browser URLs, existing drafts, ambiguous message boxes,
 changed/reloaded conversations, failed focus, and visible ongoing generation.
