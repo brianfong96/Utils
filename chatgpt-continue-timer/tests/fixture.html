@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Continue Timer integration fixture</title>
+<body>
+<h1>Local automation fixture (not ChatGPT)</h1>
+<div id="prompt-textarea" contenteditable="true" role="textbox"
+     aria-label="Ask anything" style="border:1px solid black;min-height:60px"></div>
+<p id="result" role="status">Waiting</p>
+<script>
+document.getElementById("prompt-textarea").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    document.getElementById("result").textContent = "Received: " + event.currentTarget.textContent;
+    event.currentTarget.textContent = "";
+  }
+});
+</script>
+</body>
+</html>
