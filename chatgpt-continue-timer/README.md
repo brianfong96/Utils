@@ -1,7 +1,7 @@
 # ChatGPT Continue Timer
 
 A small Windows Python app that sends `continue` once to an already-open
-ChatGPT conversation after a delay. Default: three hours. No browser profile,
+ChatGPT or Codex conversation after a delay. Default: three hours. No browser profile,
 API key, debugging port, coordinates, or screen-resolution configuration.
 
 ## Double-click to run
@@ -11,8 +11,8 @@ then double-click **Start ChatGPT Timer.cmd**. On first launch it installs the
 dependencies into a local `.venv`; subsequent launches open the app directly.
 First-time setup needs internet access.
 
-1. Open the desired ChatGPT conversation and leave that tab selected.
-2. Click **Find window**, then select the desired window.
+1. Open the desired ChatGPT or Codex conversation and leave it selected.
+2. The app finds windows on launch. Select the desired window; click **Find window** to refresh.
 3. Set hours, minutes, and seconds and click **Start timer**.
 
 The app brings the selected window forward, finds the message box through
@@ -28,7 +28,8 @@ runs on resume, not while asleep. Closing the app loses the timer.
 
 Windows only. It supports browsers exposing ChatGPT's URL and message box to
 accessibility (Chrome, Edge, Firefox, Brave, Opera, Vivaldi), plus an accessible
-ChatGPT desktop app. Browser support is capability-based, not guaranteed for
+ChatGPT/Codex desktop app. The desktop app's **Work with Codex** composer is
+recognized, including its generated empty-editor placeholder. Browser support is capability-based, not guaranteed for
 every version or language. Only visible/selected tabs are discoverable; tabs
 hidden behind other tabs are not searched or switched automatically.
 
@@ -36,6 +37,12 @@ If discovery finds nothing, select the conversation tab, restore the window,
 and try again. Chromium browsers may need accessibility enabled in their
 accessibility settings (`chrome://accessibility` or `edge://accessibility`).
 English accessible message-box names or the `prompt-textarea` ID are supported.
+
+An out-of-credits Codex window still appears in the picker with an explanation.
+You can schedule a future check; the app rechecks when the timer expires.
+If the composer remains disabled, or its Send button is disabled alongside a
+visible credit-limit banner, the timer finishes with an explicit **nothing
+typed or sent** result. It cannot restore credits or bypass a usage limit.
 
 It refuses non-ChatGPT browser URLs, existing drafts, ambiguous message boxes,
 changed/reloaded conversations, failed focus, and visible ongoing generation.

@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from app import App
-from automation import Target
+from automation import SendResult, Target
 
 
 class AppTests(unittest.TestCase):
@@ -71,6 +71,21 @@ class AppTests(unittest.TestCase):
     def test_worker_error_is_visible(self):
         self.app.finish_worker("error", "Fixture failure")
         self.assertEqual(self.app.status.get(), "Fixture failure")
+
+    def test_credit_blocked_codex_is_selectable_and_explained(self):
+        target = Target(123, 99, "ChatGPT", (1, 2), app_name="Codex",
+                        unavailable_reason="Out of credits. Nothing typed or sent.")
+        self.app.operation = "discover"
+        self.app.finish_worker("ok", [target])
+        self.assertEqual(str(self.app.start["state"]), "normal")
+        self.assertIn("Out of credits", self.app.status.get())
+        self.assertIn("Codex", self.app.windows.get())
+
+    def test_blocked_send_is_not_reported_as_submitted(self):
+        self.app.operation = "send"
+        self.app.finish_worker("ok", SendResult("blocked", "Out of credits. Nothing typed or sent."))
+        self.assertIn("Out of credits", self.app.status.get())
+        self.assertNotIn("Submitted", self.app.status.get())
 
     @patch("app.time.monotonic", return_value=40)
     def test_hung_worker_is_terminated_and_error_visible(self, clock):

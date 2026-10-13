@@ -43,11 +43,12 @@ class App:
         frame = ttk.Frame(root, padding=24)
         frame.pack(fill="both", expand=True)
         ttk.Label(frame, text="Continue, later.", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(frame, text='Send "continue" once to your open ChatGPT conversation.').pack(anchor="w", pady=(6, 20))
-        ttk.Label(frame, text="ChatGPT window").pack(anchor="w")
+        ttk.Label(frame, text='Send "continue" once to your open ChatGPT or Codex chat.').pack(anchor="w", pady=(6, 20))
+        ttk.Label(frame, text="ChatGPT / Codex window").pack(anchor="w")
         row = ttk.Frame(frame)
         row.pack(fill="x", pady=(6, 16))
         self.windows = ttk.Combobox(row, state="readonly")
+        self.windows.bind("<<ComboboxSelected>>", self.selection_changed)
         self.windows.pack(side="left", fill="x", expand=True)
         self.refresh = ttk.Button(row, text="Find window", command=self.find)
         self.refresh.pack(side="right", padx=(10, 0))
@@ -96,15 +97,23 @@ class App:
         self.busy_controls(True)
 
     def find(self):
-        self.status.set("Looking for accessible ChatGPT conversations...")
+        self.status.set("Looking for accessible ChatGPT / Codex conversations...")
         self.launch_worker("discover")
+
+    def selection_changed(self, event=None):
+        index = self.windows.current()
+        if index < 0:
+            return
+        reason = self.targets[index].unavailable_reason
+        self.status.set(f"Window found. {reason} You can schedule a later check."
+                        if reason else "Choose the delay, then start the timer.")
 
     def arm(self):
         try:
             seconds = duration_seconds(*(value.get() for value in self.values))
             index = self.windows.current()
             if index < 0:
-                raise ValueError("Select a ChatGPT window first.")
+                raise ValueError("Select a ChatGPT or Codex window first.")
             self.target = self.targets[index]
             self.timer.start(seconds)
         except ValueError as error:
@@ -128,16 +137,18 @@ class App:
             self.status.set(result)
         elif operation == "discover":
             self.targets = result
-            self.windows.configure(values=[f"{target.title} (window {target.handle})" for target in result])
+            self.windows.configure(values=[
+                f"{target.app_name}: {target.title} (window {target.handle})" for target in result
+            ])
             if result:
                 self.windows.current(0)
-                self.status.set("Choose the conversation you want, then start the timer.")
+                self.selection_changed()
             else:
                 self.windows.set("")
-                self.status.set("No accessible ChatGPT conversation found. Make its tab visible "
-                                "in Chrome, Edge, Firefox, or the desktop app, then try again.")
+                self.status.set("No accessible ChatGPT / Codex conversation found. Make its tab or "
+                                "desktop window visible, then try again.")
         else:
-            self.status.set('Submitted "continue". The message box cleared; timer finished.')
+            self.status.set(result.message)
         self.busy_controls(False)
 
     def cleanup_worker(self):
@@ -213,6 +224,7 @@ def main() -> int:
             app.cleanup_worker()
             root.destroy()
         return 0
+    root.after(0, app.find)
     root.mainloop()
     return 0
 
